@@ -27,9 +27,16 @@ def test_estimate_reasoning_tokens() -> None:
     assert estimate_reasoning_tokens(100, "x" * 75, "y" * 25) == 75
 
 
-def test_cost_local_is_free_and_anthropic_is_unknown() -> None:
+def test_cost() -> None:
     assert cost_usd("ollama/qwen2.5-coder:14b", 1000, 1000) == 0.0
-    assert cost_usd("anthropic/claude-haiku-5-5", 1000, 1000) is None
+    assert cost_usd("anthropic/claude-sonnet-5-5", 1_000_000, 1_000_000) == pytest.approx(12.0)
+    assert cost_usd("anthropic/unknown-model", 1000, 1000) is None
+
+
+def test_haiku_long_prompt_tier() -> None:
+    # at the threshold: short-prompt rate; above it: long-prompt rate for the whole call
+    assert cost_usd("anthropic/claude-haiku-5-5", 100_000, 1_000_000) == pytest.approx(0.01 + 0.50)
+    assert cost_usd("anthropic/claude-haiku-5-5", 200_000, 1_000_000) == pytest.approx(0.10 + 2.50)
 
 
 def test_runlog_roundtrip(tmp_path) -> None:

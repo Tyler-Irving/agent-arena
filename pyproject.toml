@@ -37,3 +37,7 @@ line-length = 110
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+# problems/*/test_solution.py only run inside the grader sandbox
+testpaths = ["tests"]

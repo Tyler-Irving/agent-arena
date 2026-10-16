@@ -1,7 +1,7 @@
 # claude-progress.txt — session state
 
 Branch: feat/router-smoke
-Build order step: 1 (router + arena smoke) — code done, Anthropic half blocked on API key
+Build order step: 1 (router + arena smoke) — DONE, smoke 2/2 passing (run 3)
 
 Done
 - Package moved to src/arena (pyproject: module-name = "arena", script `arena = arena.cli:main`)
@@ -13,7 +13,6 @@ Done
 - ruff + pyright added as dev deps; both clean
 
 Open
-- .env ANTHROPIC_API_KEY is a placeholder -> Haiku smoke 401s. Set the real key and rerun `uv run arena smoke`.
 - Ollama reasoning_tokens is an estimate (Ollama doesn't split completion tokens); Anthropic uses thinking_tokens.
 - think=false can't fully disable gpt-oss thinking.
 

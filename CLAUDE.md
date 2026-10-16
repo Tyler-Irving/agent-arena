@@ -15,20 +15,21 @@ The point of this project is learning how multi-agent systems behave, so keep th
 ## Layout
 
 ```
-arena/
+src/arena/             # package (src layout; `arena` script -> arena.cli:main)
   models/
-    router.py        # one interface over Anthropic + Ollama
-    pricing.py       # per-model token prices, local = 0
+    router.py          # one interface over Anthropic + Ollama
+    pricing.py         # per-model token prices, local = 0
   core/
-    orchestrator.py  # the plan -> dispatch -> collect -> decide loop
-    taskboard.py     # TaskBoard protocol + SQLite implementation
-    runlog.py        # logs every model call and result to SQLite
-    lineup.py        # loads lineup configs, maps role -> model
+    orchestrator.py    # the plan -> dispatch -> collect -> decide loop
+    taskboard.py       # TaskBoard protocol + SQLite implementation
+    runlog.py          # logs every model call and result to SQLite
+    lineup.py          # loads lineup configs, maps role -> model
   plugins/
     code_bounty/
-      roles.py       # system prompts for orchestrator, solo, planner, coder, reviewer
-      grader.py      # runs tests in Docker, returns pass/fail + output
-  cli.py             # entry point
+      roles.py         # system prompts for orchestrator, solo, planner, coder, reviewer
+      grader.py        # runs tests in Docker, returns pass/fail + output
+  cli.py               # entry point
+tests/                 # pytest unit tests (no network)
 config/
   lineups.yaml
 problems/

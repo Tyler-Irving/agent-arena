@@ -1,11 +1,10 @@
 import asyncio
-import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
-from arena.plugins.code_bounty.grader import IMAGE, grade, parse_summary, truncate
+from arena.plugins.code_bounty.grader import grade, parse_summary, truncate
 
 TWO_SUM = Path(__file__).parent.parent / "problems" / "001-two-sum"
 
@@ -50,24 +49,14 @@ def test_truncate_keeps_head_and_tail() -> None:
     assert truncate("short", limit=100) == "short"
 
 
-def _image_available() -> bool:
-    if shutil.which("docker") is None:
-        return False
-    probe = subprocess.run(["docker", "image", "inspect", IMAGE], capture_output=True)
-    return probe.returncode == 0
-
-
-docker = pytest.mark.skipif(not _image_available(), reason=f"docker or {IMAGE} image not available")
-
-
-@docker
+@pytest.mark.docker
 def test_good_solution_passes() -> None:
     r = asyncio.run(grade(GOOD, TWO_SUM))
     assert r.passed, r.stdout
     assert (r.tests_passed, r.tests_total) == (6, 6)
 
 
-@docker
+@pytest.mark.docker
 def test_bad_solution_fails() -> None:
     r = asyncio.run(grade(BAD, TWO_SUM))
     assert not r.passed
@@ -75,7 +64,7 @@ def test_bad_solution_fails() -> None:
     assert "test_does_not_reuse_element" in r.stdout
 
 
-@docker
+@pytest.mark.docker
 def test_syntax_error_fails() -> None:
     r = asyncio.run(grade("def two_sum(nums, target)\n    return (0, 1)\n", TWO_SUM))
     assert not r.passed
@@ -83,7 +72,7 @@ def test_syntax_error_fails() -> None:
     assert "SyntaxError" in r.stdout
 
 
-@docker
+@pytest.mark.docker
 def test_infinite_loop_times_out_and_container_is_removed() -> None:
     r = asyncio.run(grade("while True:\n    pass\n", TWO_SUM, timeout_s=3))
     assert r.timed_out and not r.passed
@@ -120,7 +109,7 @@ def test_not_root():
 """
 
 
-@docker
+@pytest.mark.docker
 def test_sandbox_restrictions(tmp_path: Path) -> None:
     (tmp_path / "test_solution.py").write_text(SANDBOX_TESTS)
     r = asyncio.run(grade("", tmp_path))

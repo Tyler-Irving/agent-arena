@@ -33,6 +33,7 @@ class ModelResponse(BaseModel):
     output_tokens: int  # includes reasoning_tokens
     reasoning_tokens: int = 0
     latency_ms: int
+    cost_usd: float | None  # None when the model has no known price
     model: str
 
 
@@ -108,13 +109,18 @@ async def complete(
         raise
     latency_ms = int((time.perf_counter() - start) * 1000)
 
-    response = ModelResponse(**raw._asdict(), latency_ms=latency_ms, model=model)
+    response = ModelResponse(
+        **raw._asdict(),
+        latency_ms=latency_ms,
+        cost_usd=cost_usd(model, raw.input_tokens, raw.output_tokens),
+        model=model,
+    )
     log_call(
         input_tokens=response.input_tokens,
         output_tokens=response.output_tokens,
         reasoning_tokens=response.reasoning_tokens,
         latency_ms=latency_ms,
-        cost_usd=cost_usd(model, response.input_tokens, response.output_tokens),
+        cost_usd=response.cost_usd,
         response=response.text,
         reasoning=response.reasoning,
     )

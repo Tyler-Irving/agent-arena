@@ -1,7 +1,7 @@
 # claude-progress.txt — session state
 
-Branch: feat/grader (stacked on feat/router-smoke)
-Build order step: 1 DONE (smoke 2/2), 2 DONE (grader, 21 tests passing incl. Docker sandbox)
+Branch: feat/solo-mode (stacked on feat/grader <- feat/router-smoke)
+Build order step: 1 DONE (smoke 2/2), 2 DONE (grader), 3 DONE (solo mode, 39 tests passing)
 
 Done
 - Package moved to src/arena (pyproject: module-name = "arena", script `arena = arena.cli:main`)
@@ -23,4 +23,12 @@ Step 2
 - problems/001-two-sum: prompt + 6 tests
 - Docker Desktop must be running (WSL /usr/bin/docker is a stub otherwise)
 
-Next: step 3 — solo mode end to end on 3 problems (need 002, 003, roles.py, lineups.yaml, lineup.py)
+Step 3
+- problems 002-merge-intervals, 003-weighted-maze (+ reference.py for all 3)
+- core/lineup.py + config/lineups.yaml (role shorthand or {model, think}); core/taskboard.py (async Protocol + SQLite)
+- core/orchestrator.py: run_lineup + solve_solo (3 attempts, 20 calls cap), attempts table in runlog
+- `uv run arena run --lineup X [--problem 001]`
+- run 4 haiku-solo 3/3 ($0.0006), run 5 qwen14b-solo 3/3, both first try
+- retry path verified with real model on a scratch problem (run deleted from db)
+
+Next: step 4 — scoreboard (runlog already records results/attempts; filter plugin='code_bounty')

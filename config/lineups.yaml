@@ -1,0 +1,50 @@
+# A lineup is a mode plus a model per role. A role is a model string, or
+# {model: ..., think: true|false} to force thinking on or off.
+
+# --- solo ---------------------------------------------------------------
+
+haiku-solo:
+  mode: solo
+  roles: { solo: anthropic/claude-haiku-5-5 }
+
+sonnet-solo:
+  mode: solo
+  roles: { solo: anthropic/claude-sonnet-5-5 }
+
+opus-solo:
+  mode: solo
+  roles: { solo: anthropic/claude-opus-5-5 }
+
+qwen14b-solo:
+  mode: solo
+  roles: { solo: ollama/qwen2.5-coder:14b }
+
+gptoss-solo:
+  mode: solo
+  roles: { solo: ollama/gpt-oss:20b }
+
+qwen36-solo:
+  mode: solo
+  roles: { solo: { model: "ollama/qwen3.6:35b-a3b", think: true } }
+
+qwen36-nothink-solo:
+  mode: solo
+  roles: { solo: { model: "ollama/qwen3.6:35b-a3b", think: false } }
+
+# --- team (build step 5) --------------------------------------------------
+
+sonnet-orch-qwen14b:
+  mode: team
+  roles:
+    orchestrator: anthropic/claude-sonnet-5-5
+    planner: anthropic/claude-sonnet-5-5
+    coder: ollama/qwen2.5-coder:14b
+    reviewer: ollama/qwen2.5-coder:14b
+
+all-local-gptoss:
+  mode: team
+  roles:
+    orchestrator: ollama/gpt-oss:20b
+    planner: ollama/gpt-oss:20b
+    coder: ollama/gpt-oss:20b
+    reviewer: ollama/gpt-oss:20b

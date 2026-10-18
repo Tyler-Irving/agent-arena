@@ -1,3 +1,5 @@
+# Progress: Step 5: team mode for the code bounty orchestrator (planner -> coder -> grader -> reviewer -> orchestrator decides retry/replan/give up)
+
 # claude-progress.txt — session state (updated 2026-10-18)
 
 ## Start here

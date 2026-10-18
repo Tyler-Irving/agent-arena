@@ -12,3 +12,6 @@ wheels/
 # Environment variables
 .env
 data/
+
+# Blocker log
+DEBUG.md

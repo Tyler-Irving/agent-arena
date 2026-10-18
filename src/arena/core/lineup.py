@@ -18,7 +18,7 @@ REQUIRED_ROLES = {
 
 class RoleConfig(BaseModel):
     model: str
-    think: bool | None = None  # None leaves the model's default
+    think: bool | None = None  # None keeps the model's default thinking behaviour
 
 
 class Lineup(BaseModel):

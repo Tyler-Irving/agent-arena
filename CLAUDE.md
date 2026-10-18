@@ -166,6 +166,14 @@ uv run arena scoreboard                    # pass rate, avg attempts, tokens, co
 
 Stop after each step and confirm it works before moving on.
 
+## Checks
+
+Run before every commit (the edit hook only runs ruff on the edited file):
+
+```
+uv run ruff check src tests && uv run ruff format --check src tests && uv run pyright src tests && uv run pytest -q
+```
+
 ## Conventions
 
 - async throughout, type hints, pydantic models for configs and responses

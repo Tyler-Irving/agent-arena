@@ -6,7 +6,9 @@
 - Build order: steps 1-5 DONE (step 5 awaiting your confirmation). Next is step 6, the remaining 7 problems.
 - Branch: feat/team-mode. Stack, none pushed or merged:
     master <- feat/router-smoke <- feat/grader <- feat/solo-mode <- feat/scoreboard <- feat/team-mode
-  The repo has no `main` branch yet, only master. Run /review before any PR.
+  GitHub: https://github.com/Tyler-Irving/agent-arena (private). main = init commit only;
+  all work is on the pushed feature branches. Build steps are tagged step-1-router .. step-5-team.
+  Run /code-review before any PR.
 - Branch step 6 off feat/team-mode (e.g. feat/more-problems) unless the stack has been merged.
 - Docker Desktop must be running. In WSL, /usr/bin/docker is a stub until it starts.
   Start from WSL: cmd.exe /c start "" "C:\Program Files\Docker\Docker\Docker Desktop.exe"

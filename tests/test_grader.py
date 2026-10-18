@@ -4,7 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from arena.plugins.code_bounty.grader import grade, parse_summary, truncate
+from arena.plugins.code_bounty import grader
+from arena.plugins.code_bounty.grader import GraderError, grade, parse_summary, truncate
 
 TWO_SUM = Path(__file__).parent.parent / "problems" / "001-two-sum"
 
@@ -85,6 +86,36 @@ def test_solution_exiting_early_fails(code: int) -> None:
 def test_infinite_loop_times_out_and_container_is_removed() -> None:
     r = asyncio.run(grade("while True:\n    pass\n", TWO_SUM, timeout_s=3))
     assert r.timed_out and not r.passed
+    leftover = subprocess.run(
+        ["docker", "ps", "-aq", "--filter", "name=arena-grade-"], capture_output=True, text=True
+    )
+    assert leftover.stdout.strip() == ""
+
+
+@pytest.mark.docker
+def test_running_solution_is_not_mistaken_for_a_stall(monkeypatch) -> None:
+    # Past the stall check, an infinite loop still has a process, so it times out normally.
+    monkeypatch.setattr(grader, "STALL_CHECK_S", 1.0)
+    monkeypatch.setattr(grader, "STALL_POLL_S", 0.5)
+    r = asyncio.run(grade("while True:\n    pass\n", TWO_SUM, timeout_s=4))
+    assert r.timed_out and not r.passed
+
+
+@pytest.mark.docker
+def test_stalled_container_is_retried_then_reported(monkeypatch) -> None:
+    # Pretend docker lost track of every container: each try is killed after the
+    # stall check, and after the retries the grader reports a sandbox failure.
+    calls = []
+
+    async def nothing_running(name: str) -> bool:
+        calls.append(name)
+        return False
+
+    monkeypatch.setattr(grader, "STALL_CHECK_S", 1.0)
+    monkeypatch.setattr(grader, "_has_processes", nothing_running)
+    with pytest.raises(GraderError, match="lost track"):
+        asyncio.run(grade("import time\ntime.sleep(20)\n", TWO_SUM))
+    assert len(set(calls)) == grader.STALL_RETRIES + 1  # one fresh container per try
     leftover = subprocess.run(
         ["docker", "ps", "-aq", "--filter", "name=arena-grade-"], capture_output=True, text=True
     )

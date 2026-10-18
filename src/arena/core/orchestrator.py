@@ -109,7 +109,7 @@ class Session:
             timed_out=result.timed_out,
             output=result.stdout + result.stderr,
         )
-        print(f"   attempt {attempt}: {describe(result)} ({model_note(reply)})")
+        print(f"   attempt {attempt}: {roles.attempt_outcome(result)} ({model_note(reply)})")
         return Graded(code, result)
 
     def outcome(
@@ -220,9 +220,10 @@ async def solve_solo(problem: Problem, role: RoleConfig, run_id: int, log: RunLo
 async def solve_team(problem: Problem, team: dict[str, RoleConfig], run_id: int, log: RunLog) -> Outcome:
     """planner -> coder -> grader, and on failure reviewer -> orchestrator decides.
 
-    Every call is a fresh single-message conversation built from the current
-    plan and the latest graded attempt only, so local models' context stays
-    small. The reviewer and orchestrator are skipped after the last attempt,
+    Every call is a fresh single-message conversation. The coder and reviewer
+    see the current plan and the latest graded attempt only, so local models'
+    context stays small; the orchestrator also gets a one-line summary of each
+    earlier attempt. The reviewer and orchestrator are skipped after the last attempt,
     since nothing could act on what they say.
     """
     session = Session(problem, run_id, log)
@@ -278,18 +279,21 @@ async def solve_team(problem: Problem, team: dict[str, RoleConfig], run_id: int,
                 roles.decide_task(prompt, plan, plan_number, result, review, attempt, attempts_left, history),
             )
             decision = roles.parse_decision(reply.text)
+            decided = decision is not None
             if decision is None:
                 print(f"   orchestrator: no decision in reply, retrying ({model_note(reply)})")
                 decision = "retry"
             else:
                 print(f"   orchestrator: {decision} ({model_note(reply)})")
-            history.append(roles.PastAttempt(attempt, plan_number, roles.attempt_outcome(result), decision))
-            lead_reason = reply.text or "(no reason given)"
+            history.append(
+                roles.PastAttempt(attempt, plan_number, roles.attempt_outcome(result), decision, decided)
+            )
 
             if decision == "give_up":
                 stop_reason = "orchestrator gave up"
                 break
             if decision == "replan":
+                lead_reason = roles.decision_reason(reply.text)
                 reply = await ask(
                     "planner",
                     roles.PLANNER_SYSTEM,
@@ -316,12 +320,6 @@ async def solve_team(problem: Problem, team: dict[str, RoleConfig], run_id: int,
 def model_note(reply: ModelResponse) -> str:
     note = f"model {reply.latency_ms / 1000:.1f}s, {reply.output_tokens} out tokens"
     return f"{note}, cut off at the token limit" if reply.truncated else note
-
-
-def describe(result: GradeResult) -> str:
-    if result.timed_out:
-        return "timed out"
-    return f"{result.tests_passed}/{result.tests_total} tests"
 
 
 def format_cost(cost: float | None) -> str:

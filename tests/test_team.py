@@ -266,3 +266,34 @@ def test_replan_passes_the_reason_and_counts_plans(monkeypatch, tmp_path) -> Non
     assert "Current plan (plan 2):\nuse a dict" in second_decision
     assert "- Attempt 1 (plan 1): 5/6 tests passed. You chose REPLAN." in second_decision
     assert "Attempt 2 (plan 2) failed." in second_decision
+
+
+def test_assumed_retry_is_not_reported_as_a_choice(monkeypatch, tmp_path) -> None:
+    replies = {
+        "planner": [_reply("plan")],
+        "coder": [
+            _reply("```python\nbad\n```"),
+            _reply("```python\nbad\n```"),
+            _reply("```python\ngood\n```"),
+        ],
+        "reviewer": [_reply("fix A"), _reply("fix B")],
+        "orchestrator": [_reply("hmm, not sure"), _reply("DECISION: RETRY")],
+    }
+    _, _, seen = _run_team(monkeypatch, tmp_path, replies, [False, False, True])
+
+    second = [prompt for role, prompt in seen if role == "orchestrator"][1]
+    assert "Your reply had no clear decision, so the coder retried." in second
+    assert "You chose RETRY" not in second
+
+
+@pytest.mark.parametrize(
+    ("reply", "reason"),
+    [
+        ("DECISION: REPLAN\nbrute force is too slow", "brute force is too slow"),
+        ("DECISION: REPLAN – greedy is not optimal.", "greedy is not optimal"),
+        ("**DECISION:** REPLAN", roles.NO_REASON),
+        ("\n", roles.NO_REASON),
+    ],
+)
+def test_decision_reason(reply: str, reason: str) -> None:
+    assert roles.decision_reason(reply) == reason

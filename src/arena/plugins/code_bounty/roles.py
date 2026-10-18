@@ -149,8 +149,8 @@ You lead a small team solving a Python coding problem. A planner writes the \
 approach, a coder writes the code, a hidden pytest suite grades it, and a \
 reviewer explains failures.
 
-The latest attempt failed. You are shown every earlier attempt and what you \
-decided after it. Decide what happens next:
+The latest attempt failed. You are shown any earlier attempts and what you \
+decided after each. Decide what happens next:
 - RETRY: the plan is sound and the coder can fix the code using the review. \
 The coder keeps following the current plan, so only retry if the fix fits \
 within it.
@@ -173,6 +173,7 @@ class PastAttempt(NamedTuple):
     plan: int  # 1 for the first plan, 2 after one replan, ...
     outcome: str  # e.g. "3/13 tests passed"
     decision: Decision | None  # None when the coder was simply asked again (no code)
+    decided: bool = True  # False when the reply had no decision and RETRY was assumed
 
 
 def attempt_outcome(result: GradeResult | None) -> str:
@@ -198,7 +199,9 @@ def decide_task(
         lines = []
         for past in history:
             line = f"- Attempt {past.attempt} (plan {past.plan}): {past.outcome}."
-            if past.decision is not None:
+            if past.decision is not None and not past.decided:
+                line += " Your reply had no clear decision, so the coder retried."
+            elif past.decision is not None:
                 line += f" You chose {past.decision.upper()}."
             lines.append(line)
         parts.append("Earlier attempts:\n" + "\n".join(lines))
@@ -212,6 +215,7 @@ def decide_task(
 
 
 _DECISION_LINE = re.compile(r"DECISION:\s*\**\s*(RETRY|REPLAN|GIVE[ _-]?UP)", re.IGNORECASE)
+NO_REASON = "(no reason given)"
 _DECISION_WORD = re.compile(r"\b(RETRY|REPLAN|GIVE[ _-]?UP)\b")
 
 
@@ -227,3 +231,9 @@ def parse_decision(reply: str) -> Decision | None:
     if word.startswith("GIVE"):
         return "give_up"
     return "retry" if word == "RETRY" else "replan"
+
+
+def decision_reason(reply: str) -> str:
+    """The orchestrator's explanation, without the DECISION line itself."""
+    reason = _DECISION_LINE.sub("", reply, count=1).strip(" \n-–—:.;*")
+    return reason or NO_REASON

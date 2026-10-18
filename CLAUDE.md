@@ -23,6 +23,7 @@ src/arena/             # package (src layout; `arena` script -> arena.cli:main)
     orchestrator.py    # the plan -> dispatch -> collect -> decide loop
     taskboard.py       # TaskBoard protocol + SQLite implementation
     runlog.py          # logs every model call and result to SQLite
+    scoreboard.py      # per-lineup aggregates over all runs for `arena scoreboard`
     lineup.py          # loads lineup configs, maps role -> model
   plugins/
     code_bounty/

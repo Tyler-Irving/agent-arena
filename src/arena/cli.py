@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from arena.core.lineup import get_lineup
 from arena.core.orchestrator import format_cost, run_lineup
 from arena.core.runlog import get_runlog
+from arena.core.scoreboard import format_scoreboard, scoreboard
 from arena.core.taskboard import SqliteTaskBoard
 from arena.models.router import complete
 from arena.plugins.code_bounty.grader import GraderError
@@ -78,6 +79,15 @@ async def run(lineup_name: str, problem: str | None) -> int:
     return 0
 
 
+def show_scoreboard() -> int:
+    rows = scoreboard(get_runlog())
+    if not rows:
+        print("no runs yet; try `arena run --lineup haiku-solo`")
+        return 0
+    print(format_scoreboard(rows))
+    return 0
+
+
 def main() -> None:
     load_dotenv()
     parser = argparse.ArgumentParser(prog="arena")
@@ -95,8 +105,12 @@ def main() -> None:
     p_run.add_argument("--lineup", required=True, help="lineup name from config/lineups.yaml")
     p_run.add_argument("--problem", help='one problem, e.g. "001" (default: all)')
 
+    sub.add_parser("scoreboard", help="compare lineups across all runs")
+
     args = parser.parse_args()
     if args.command == "smoke":
         sys.exit(asyncio.run(smoke(args.models or SMOKE_MODELS)))
     elif args.command == "run":
         sys.exit(asyncio.run(run(args.lineup, args.problem)))
+    elif args.command == "scoreboard":
+        sys.exit(show_scoreboard())

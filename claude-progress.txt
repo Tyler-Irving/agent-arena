@@ -1,19 +1,14 @@
-# Progress: Step 5: team mode for the code bounty orchestrator (planner -> coder -> grader -> reviewer -> orchestrator decides retry/replan/give up)
-
 # claude-progress.txt — session state (updated 2026-10-18)
 
 ## Start here
-- Build order: steps 1-5 DONE (step 5 awaiting your confirmation). Next is step 6, the remaining 7 problems.
-- Branch: feat/team-mode. Stack, none pushed or merged:
-    master <- feat/router-smoke <- feat/grader <- feat/solo-mode <- feat/scoreboard <- feat/team-mode
-  GitHub: https://github.com/Tyler-Irving/agent-arena (private). main = init commit only;
-  all work is on the pushed feature branches. Build steps are tagged step-1-router .. step-5-team.
-  Run /code-review before any PR.
-- Branch step 6 off feat/team-mode (e.g. feat/more-problems) unless the stack has been merged.
+- Build order: steps 1-5 DONE and merged to main. Next is step 6, the remaining 7 problems.
+- GitHub: https://github.com/Tyler-Irving/agent-arena (private). main has steps 1-5, merged
+  through one PR per step; build steps are tagged step-1-router .. step-5-team.
+- Branch step 6 off main (e.g. feat/more-problems). Run /code-review before any PR.
 - Docker Desktop must be running. In WSL, /usr/bin/docker is a stub until it starts.
   Start from WSL: cmd.exe /c start "" "C:\Program Files\Docker\Docker\Docker Desktop.exe"
 - Verify the state before changing anything:
-    uv run ruff check src tests && uv run pyright src tests && uv run pytest -q   # 56 passing
+    uv run ruff check src tests && uv run pyright src tests && uv run pytest -q   # 63 passing
     uv run arena scoreboard
 
 ## What exists
@@ -57,4 +52,13 @@
 - Step 6: make the remaining 7 problems mostly medium or harder, with stated-but-easy-to-miss edge cases.
 - Ollama reasoning_tokens is a character-share estimate; Anthropic reports thinking_tokens exactly.
 - think=false can't fully disable gpt-oss thinking.
+- Anthropic think=false: Haiku 5.5 -> disabled, Sonnet 5.5 -> between_tools, Opus 5.5 can't
+  (lineup load fails). Anthropic thinking text is empty in the log because the API's default
+  display is "omitted"; setting display "summarized" would store a readable summary. Not done.
+- Provider errors are not scored (no results row); the CLI reports them as "not scored".
+- Replies cut off at max_tokens are flagged (calls.truncated) and get token-limit feedback.
+- A deliberately adversarial solution could still fake pytest's summary line; the grader only
+  guards against accidental early exits. test_solution.py is readable inside the sandbox.
+- tests/test_grader.py::test_good_solution_passes failed once (empty stdout) during a slow
+  44s suite run and never again in 6+ runs; it now prints the full GradeResult if it recurs.
 - The VS Code Pylance "pydantic could not be resolved" warning means the interpreter isn't set to .venv/bin/python.

@@ -134,7 +134,7 @@ Model-written code never runs directly on the host.
 `problems/<id>-<slug>/prompt.md` describes the task and the exact function signature.
 `test_solution.py` does `from solution import <fn>` and uses plain pytest asserts.
 `reference.py` is a known-good solution; `tests/test_solo.py` grades every reference to prove the tests are right.
-Start with 10 problems, Advent of Code difficulty, mix of easy and medium.
+10 problems in Advent of Code style: 001-003 are easy warm-ups, 004-010 are medium to hard, each with edge cases the prompt states but that are easy to miss. Every test expectation is checked against an independent brute force or by hand, and each trap has a deliberately wrong solution that must fail.
 
 ## SQLite schema
 

@@ -1,14 +1,14 @@
 # claude-progress.txt — session state (updated 2026-10-18)
 
 ## Start here
-- Build order: steps 1-5 DONE and merged to main. Next is step 6, the remaining 7 problems.
+- Build order: steps 1-6 DONE and merged to main (tags step-1-router .. step-6-problems).
 - GitHub: https://github.com/Tyler-Irving/agent-arena (private). main has steps 1-5, merged
   through one PR per step; build steps are tagged step-1-router .. step-5-team.
-- Branch step 6 off main (e.g. feat/more-problems). Run /code-review before any PR.
+- Run /code-review before any PR.
 - Docker Desktop must be running. In WSL, /usr/bin/docker is a stub until it starts.
   Start from WSL: cmd.exe /c start "" "C:\Program Files\Docker\Docker\Docker Desktop.exe"
 - Verify the state before changing anything:
-    uv run ruff check src tests && uv run pyright src tests && uv run pytest -q   # 63 passing
+    uv run ruff check src tests && uv run pyright src tests && uv run pytest -q   # 82 passing
     uv run arena scoreboard
 
 ## What exists
@@ -42,9 +42,16 @@
   lineup by planting a bug in attempt 1 (scratch db, not in arena.db): both reviewers found it,
   both orchestrators replied `DECISION: RETRY`, attempt 2 passed.
 
-## Step 6 notes
-- Harder problems are what will exercise review / replan / give-up for real; watch how often
-  each orchestrator picks REPLAN vs RETRY and whether GIVE_UP ever fires early.
+## First full runs on all 10 problems (runs 12-16, 2026-10-18)
+- haiku-solo 10/10, all first try, $0.008
+- gptoss-solo 9/10 (failed 009 cron), all-local-gptoss team 10/10 (007 and 009 on the 2nd try)
+- qwen14b-solo 4/10; sonnet-orch-qwen14b team 7/10 ($0.19): Sonnet planning lifts qwen14b by 3
+- Orchestrators only ever chose RETRY (8 times for Sonnet, 2 for gpt-oss); REPLAN and GIVE_UP
+  have still never fired on a real run
+- Haiku and gpt-oss find the set easy; the separation is among the weaker local models.
+  One run per lineup is noisy (qwen14b passed 003 in run 13 but failed it in run 11)
+- Runs 10 (haiku-solo) and 11 (qwen14b-solo, interrupted, never finished) used the pre-fix
+  problems; earlier runs used only problems 001-003. The scoreboard mixes all of them
 
 ## Open decisions / known issues
 - Local-model wall time includes the cold load on a run's first problem (gpt-oss ~25s).

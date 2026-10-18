@@ -52,7 +52,7 @@ def test_truncate_keeps_head_and_tail() -> None:
 @pytest.mark.docker
 def test_good_solution_passes() -> None:
     r = asyncio.run(grade(GOOD, TWO_SUM))
-    assert r.passed, r.stdout
+    assert r.passed, r.model_dump()
     assert (r.tests_passed, r.tests_total) == (6, 6)
 
 
@@ -70,6 +70,15 @@ def test_syntax_error_fails() -> None:
     assert not r.passed
     assert r.tests_passed == 0
     assert "SyntaxError" in r.stdout
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("code", [0, 126])
+def test_solution_exiting_early_fails(code: int) -> None:
+    # Ends pytest during collection, before any test runs.
+    r = asyncio.run(grade(f"import os\nos._exit({code})\n", TWO_SUM))
+    assert not r.passed
+    assert r.tests_passed == 0
 
 
 @pytest.mark.docker

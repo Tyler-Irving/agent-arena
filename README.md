@@ -39,6 +39,7 @@ approach), or **give up**. Hard limits: 3 attempts and 20 model calls per proble
 
 Requirements: Python 3.12 with [uv](https://docs.astral.sh/uv/), Docker, and either an
 Anthropic API key or [Ollama](https://ollama.com) (or both).
+Run every command from the repo root; config, problems and the database are found relative to it.
 
 ```bash
 uv sync

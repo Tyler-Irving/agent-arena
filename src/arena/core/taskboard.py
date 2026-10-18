@@ -5,13 +5,12 @@ Streams later without touching the orchestrator.
 """
 
 import sqlite3
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 
 from pydantic import BaseModel
 
-from arena.core.runlog import DEFAULT_DB
+from arena.core.runlog import DEFAULT_DB, utc_now
 
 
 class Task(BaseModel):
@@ -40,10 +39,6 @@ CREATE TABLE IF NOT EXISTS tasks (
 """
 
 
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
-
-
 class SqliteTaskBoard:
     def __init__(self, path: Path = DEFAULT_DB) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -51,7 +46,7 @@ class SqliteTaskBoard:
         self.db.executescript(SCHEMA)
 
     async def put(self, run_id: int, problem_id: str) -> int:
-        now = _now()
+        now = utc_now()
         cur = self.db.execute(
             "INSERT INTO tasks (run_id, problem_id, status, created_at, updated_at) "
             "VALUES (?, ?, 'pending', ?, ?)",
@@ -68,7 +63,7 @@ class SqliteTaskBoard:
                WHERE id = (SELECT id FROM tasks WHERE run_id = ? AND status = 'pending'
                            ORDER BY id LIMIT 1)
                RETURNING id, run_id, problem_id""",
-            (_now(), run_id),
+            (utc_now(), run_id),
         ).fetchone()
         self.db.commit()
         return Task(id=row[0], run_id=row[1], problem_id=row[2]) if row else None
@@ -82,6 +77,6 @@ class SqliteTaskBoard:
     def _finish(self, task_id: int, status: str, reason: str | None) -> None:
         self.db.execute(
             "UPDATE tasks SET status = ?, reason = ?, updated_at = ? WHERE id = ?",
-            (status, reason, _now(), task_id),
+            (status, reason, utc_now(), task_id),
         )
         self.db.commit()

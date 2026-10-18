@@ -66,7 +66,7 @@ Models to support from day one:
 | anthropic | claude-haiku-5-5, claude-sonnet-5-5, claude-opus-5-5 |
 | ollama | qwen2.5-coder:14b, gpt-oss:20b, qwen3.6:35b-a3b |
 
-Leave Anthropic prices as placeholders in `pricing.py` with a TODO. Do not guess numbers.
+Anthropic prices in `pricing.py` are copied from the Anthropic pricing page and dated in its docstring. Update them from that page; never guess numbers.
 
 ### Reasoning models
 

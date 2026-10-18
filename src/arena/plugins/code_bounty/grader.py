@@ -121,13 +121,17 @@ async def _run(workdir: Path, timeout_s: float) -> GradeResult:
     duration_ms = int((time.perf_counter() - start) * 1000)
 
     stdout, stderr = out.decode(errors="replace"), err.decode(errors="replace")
-    # 125-127 come from docker itself (daemon error, missing image), not from pytest.
-    if not timed_out and proc.returncode in (125, 126, 127):
+    # 125-127 come from docker itself (daemon error, missing image) when the
+    # container never started. The solution can exit with those codes too, but
+    # then pytest has already written to stdout and docker has not complained.
+    if not timed_out and proc.returncode in (125, 126, 127) and not stdout and "docker" in stderr:
         raise GraderError(f"docker run failed ({proc.returncode}): {stderr.strip()}")
 
     tests_passed, tests_total = parse_summary(stdout)
     return GradeResult(
-        passed=not timed_out and proc.returncode == 0,
+        # Exit 0 alone isn't enough: a solution that calls sys.exit(0) on import
+        # ends pytest before any test runs.
+        passed=not timed_out and proc.returncode == 0 and tests_total > 0 and tests_passed == tests_total,
         tests_passed=tests_passed,
         tests_total=tests_total,
         timed_out=timed_out,

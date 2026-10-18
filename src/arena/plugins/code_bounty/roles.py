@@ -8,9 +8,9 @@ from typing import Literal
 
 from arena.plugins.code_bounty.grader import TIMEOUT_S, GradeResult
 
-SOLO_SYSTEM = """\
-You are an expert Python programmer solving a coding problem.
-
+# What every role that writes solution.py is told about the file itself. Solo
+# and team coders share it so both modes are graded on the same instructions.
+SOLUTION_RULES = """\
 Write a complete Python module that will be saved as solution.py. A hidden \
 pytest suite imports it with `from solution import <function>`, so define the \
 function exactly as the problem's signature specifies.
@@ -21,6 +21,11 @@ Rules:
 - Reply with exactly one ```python code block containing the whole module. \
 Keep any explanation outside the block short."""
 
+SOLO_SYSTEM = f"""\
+You are an expert Python programmer solving a coding problem.
+
+{SOLUTION_RULES}"""
+
 
 def solo_task(prompt: str) -> str:
     return f"{prompt.strip()}\n\nWrite solution.py."
@@ -29,6 +34,16 @@ def solo_task(prompt: str) -> str:
 NO_CODE_FEEDBACK = """\
 Your reply did not contain a ```python code block, so there was nothing to \
 test. Reply with the complete solution.py in one ```python block."""
+
+TRUNCATED_FEEDBACK = """\
+Your reply hit the output token limit before it finished, so there was no \
+complete ```python code block to test. Think less and keep the reply short: \
+reply with only the complete solution.py in one ```python block."""
+
+
+def no_code_feedback(truncated: bool) -> str:
+    """What to tell a model whose reply had no code block to grade."""
+    return TRUNCATED_FEEDBACK if truncated else NO_CODE_FEEDBACK
 
 
 def grade_report(result: GradeResult, subject: str = "The solution") -> str:
@@ -87,20 +102,12 @@ def replan_task(prompt: str, plan: str, code: str, result: GradeResult, review: 
     )
 
 
-CODER_SYSTEM = """\
+CODER_SYSTEM = f"""\
 You are the coder on a small team solving a Python coding problem. A planner \
 has written the approach; implement it. If you spot a bug in the plan, fix it \
 in the code.
 
-Write a complete Python module that will be saved as solution.py. A hidden \
-pytest suite imports it with `from solution import <function>`, so define the \
-function exactly as the problem's signature specifies.
-
-Rules:
-- Python 3.12 standard library only.
-- No input(), no printing, no network or file access.
-- Reply with exactly one ```python code block containing the whole module. \
-Keep any explanation outside the block short."""
+{SOLUTION_RULES}"""
 
 
 def coder_task(prompt: str, plan: str, last_code: str | None = None, last_feedback: str | None = None) -> str:

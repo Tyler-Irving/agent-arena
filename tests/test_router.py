@@ -1,3 +1,5 @@
+import sqlite3
+
 import pytest
 
 from arena.core.runlog import RunLog
@@ -59,3 +61,16 @@ def test_runlog_roundtrip(tmp_path) -> None:
     assert (row["run_id"], row["think"], row["reasoning"]) == (run_id, 0, "thought")
     assert row["reasoning_tokens"] == 4
     assert log.db.execute("SELECT finished_at FROM runs").fetchone()[0] is not None
+
+
+def test_runlog_adds_columns_to_older_databases(tmp_path) -> None:
+    db = tmp_path / "arena.db"
+    old = sqlite3.connect(db)
+    old.execute("CREATE TABLE calls (id INTEGER PRIMARY KEY, model TEXT NOT NULL, created_at TEXT NOT NULL)")
+    old.commit()
+    old.close()
+
+    log = RunLog(db)
+    columns = {row["name"] for row in log.db.execute("PRAGMA table_info(calls)")}
+    assert "truncated" in columns
+    RunLog(db)  # opening again is a no-op

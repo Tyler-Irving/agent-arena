@@ -138,7 +138,8 @@ def test_team_orchestrator_gives_up(monkeypatch, tmp_path) -> None:
     }
     _, outcome, _ = _run_team(monkeypatch, tmp_path, replies, [False])
 
-    assert (outcome.passed, outcome.attempts, outcome.calls, outcome.gave_up) == (False, 1, 4, True)
+    assert (outcome.passed, outcome.attempts, outcome.calls) == (False, 1, 4)
+    assert outcome.stop_reason == "orchestrator gave up"
     assert _task_reason(tmp_path) == "orchestrator gave up after 1 attempts"
 
 
@@ -159,13 +160,39 @@ def test_team_skips_review_after_last_attempt(monkeypatch, tmp_path) -> None:
     assert _task_reason(tmp_path) == "tests failing after 3 attempts"
 
 
-def test_team_model_error_fails_problem(monkeypatch, tmp_path) -> None:
+def test_team_no_code_reply_keeps_earlier_code_and_review(monkeypatch, tmp_path) -> None:
+    replies = {
+        "planner": [_reply("plan")],
+        "coder": [_reply("```python\nbad\n```"), _reply("no code"), _reply("```python\ngood\n```")],
+        "reviewer": [_reply("off by one on line 3")],
+        "orchestrator": [_reply("DECISION: RETRY")],
+    }
+    _, outcome, seen = _run_team(monkeypatch, tmp_path, replies, [False, True])
+
+    assert (outcome.passed, outcome.attempts) == (True, 3)
+    third_coder_prompt = seen[-1][1]
+    assert "did not contain" in third_coder_prompt
+    assert "```python\nbad\n```" in third_coder_prompt and "off by one on line 3" in third_coder_prompt
+
+
+def test_team_truncated_reply_gets_token_limit_feedback(monkeypatch, tmp_path) -> None:
+    cut_off = _reply("```python\ndef two_sum(")
+    cut_off.truncated = True
+    replies = {"planner": [_reply("plan")], "coder": [cut_off, _reply("```python\ngood\n```")]}
+    _, outcome, seen = _run_team(monkeypatch, tmp_path, replies, [True])
+
+    assert (outcome.passed, outcome.attempts) == (True, 2)
+    assert "output token limit" in seen[-1][1]
+
+
+def test_team_model_error_fails_problem_without_scoring_it(monkeypatch, tmp_path) -> None:
     replies = {"planner": [_reply("plan")], "coder": [RuntimeError("boom")]}
-    _, outcome, _ = _run_team(monkeypatch, tmp_path, replies, [])
+    log, outcome, _ = _run_team(monkeypatch, tmp_path, replies, [])
 
     assert not outcome.passed and outcome.error == "RuntimeError: boom"
-    assert (outcome.attempts, outcome.calls) == (1, 2)
+    assert (outcome.attempts, outcome.calls) == (0, 2)
     assert _task_reason(tmp_path) == "RuntimeError: boom"
+    assert log.db.execute("SELECT COUNT(*) FROM results").fetchone()[0] == 0
 
 
 def test_team_respects_call_limit(monkeypatch, tmp_path) -> None:
@@ -178,4 +205,5 @@ def test_team_respects_call_limit(monkeypatch, tmp_path) -> None:
     _, outcome, _ = _run_team(monkeypatch, tmp_path, replies, [False])
 
     assert not outcome.passed and outcome.calls == 3
-    assert outcome.error == "hit the 3-call limit"
+    assert outcome.error is None and outcome.stop_reason == "hit the 3-call limit"
+    assert _task_reason(tmp_path) == "hit the 3-call limit after 1 attempts"

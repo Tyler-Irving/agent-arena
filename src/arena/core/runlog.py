@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS calls (
     response TEXT,
     reasoning TEXT,
     error TEXT,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    truncated INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS results (
@@ -69,7 +70,7 @@ CREATE TABLE IF NOT EXISTS attempts (
 """
 
 
-def _now() -> str:
+def utc_now() -> str:
     return datetime.now(UTC).isoformat()
 
 
@@ -81,18 +82,24 @@ class RunLog:
         self.db = sqlite3.connect(path)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
+        # Columns added after the first release; CREATE TABLE IF NOT EXISTS skips
+        # existing tables, so add them to older databases here.
+        call_columns = {row["name"] for row in self.db.execute("PRAGMA table_info(calls)")}
+        if "truncated" not in call_columns:
+            self.db.execute("ALTER TABLE calls ADD COLUMN truncated INTEGER")
+            self.db.commit()
 
     def start_run(self, lineup: str, plugin: str) -> int:
         cur = self.db.execute(
             "INSERT INTO runs (lineup, plugin, started_at) VALUES (?, ?, ?)",
-            (lineup, plugin, _now()),
+            (lineup, plugin, utc_now()),
         )
         self.db.commit()
         assert cur.lastrowid is not None
         return cur.lastrowid
 
     def finish_run(self, run_id: int) -> None:
-        self.db.execute("UPDATE runs SET finished_at = ? WHERE id = ?", (_now(), run_id))
+        self.db.execute("UPDATE runs SET finished_at = ? WHERE id = ?", (utc_now(), run_id))
         self.db.commit()
 
     def log_call(
@@ -113,12 +120,13 @@ class RunLog:
         response: str | None = None,
         reasoning: str | None = None,
         error: str | None = None,
+        truncated: bool | None = None,
     ) -> int:
         cur = self.db.execute(
             """INSERT INTO calls (run_id, problem_id, role, model, input_tokens, output_tokens,
                    reasoning_tokens, latency_ms, cost_usd, think, system, messages, response,
-                   reasoning, error, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   reasoning, error, created_at, truncated)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 run_id,
                 problem_id,
@@ -135,7 +143,8 @@ class RunLog:
                 response,
                 reasoning,
                 error,
-                _now(),
+                utc_now(),
+                None if truncated is None else int(truncated),
             ),
         )
         self.db.commit()
@@ -169,7 +178,7 @@ class RunLog:
                 tests_total,
                 None if timed_out is None else int(timed_out),
                 output,
-                _now(),
+                utc_now(),
             ),
         )
         self.db.commit()

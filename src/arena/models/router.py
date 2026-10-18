@@ -35,6 +35,7 @@ class ModelResponse(BaseModel):
     latency_ms: int
     cost_usd: float | None  # None when the model has no known price
     model: str
+    truncated: bool = False  # stopped at max_tokens, so the answer may be cut off
 
 
 class _Raw(NamedTuple):
@@ -43,6 +44,21 @@ class _Raw(NamedTuple):
     input_tokens: int
     output_tokens: int
     reasoning_tokens: int
+    truncated: bool
+
+
+# Current Claude models think adaptively when `thinking` is omitted. Turning it
+# off takes a different setting per model, and some models can't turn it off.
+_ANTHROPIC_THINKING_OFF: dict[str, dict] = {
+    "claude-haiku-5-5": {"type": "disabled"},
+    "claude-sonnet-5-5": {"type": "between_tools"},
+}
+
+
+def can_disable_thinking(model: str) -> bool:
+    """Whether `think: false` means anything for this provider/model string."""
+    provider, _, name = model.partition("/")
+    return provider != "anthropic" or name in _ANTHROPIC_THINKING_OFF
 
 
 _anthropic: AsyncAnthropic | None = None
@@ -123,6 +139,7 @@ async def complete(
         cost_usd=response.cost_usd,
         response=response.text,
         reasoning=response.reasoning,
+        truncated=response.truncated,
     )
     return response
 
@@ -133,8 +150,12 @@ async def _complete_anthropic(
     kwargs: dict = {}
     if system:
         kwargs["system"] = system
-    if think:
+    if think is True:
         kwargs["thinking"] = {"type": "adaptive"}
+    elif think is False:
+        if name not in _ANTHROPIC_THINKING_OFF:
+            raise ValueError(f"{name} cannot turn thinking off")
+        kwargs["thinking"] = _ANTHROPIC_THINKING_OFF[name]
 
     msg = await _anthropic_client().messages.create(
         model=name, messages=cast(list[MessageParam], messages), max_tokens=max_tokens, **kwargs
@@ -149,6 +170,7 @@ async def _complete_anthropic(
         input_tokens=msg.usage.input_tokens,
         output_tokens=msg.usage.output_tokens,
         reasoning_tokens=(details.thinking_tokens or 0) if details else 0,
+        truncated=msg.stop_reason == "max_tokens",
     )
 
 
@@ -166,7 +188,8 @@ async def _complete_ollama(
         model=name, messages=cast(list[ChatCompletionMessageParam], chat), max_tokens=max_tokens, **kwargs
     )
 
-    message = resp.choices[0].message
+    choice = resp.choices[0]
+    message = choice.message
     # Ollama returns thinking in a non-standard `reasoning` field; some models
     # put it inline in <think> tags instead.
     field_reasoning = (message.model_extra or {}).get("reasoning")
@@ -182,7 +205,8 @@ async def _complete_ollama(
     else:
         reasoning_tokens = estimate_reasoning_tokens(output_tokens, reasoning, text)
 
-    return _Raw(text, reasoning, input_tokens, output_tokens, reasoning_tokens)
+    truncated = choice.finish_reason == "length"
+    return _Raw(text, reasoning, input_tokens, output_tokens, reasoning_tokens, truncated)
 
 
 _THINK_BLOCK = re.compile(r"<think>(.*?)</think>", re.DOTALL)

@@ -29,7 +29,10 @@ src/arena/             # package (src layout; `arena` script -> arena.cli:main)
       roles.py         # system prompts for orchestrator, solo, planner, coder, reviewer
       grader.py        # runs tests in Docker, returns pass/fail + output
   cli.py               # entry point
-tests/                 # pytest unit tests (no network)
+tests/                 # pytest unit tests; grader tests skip if Docker/image missing
+docker/
+  arena-grader/
+    Dockerfile         # grader sandbox image
 config/
   lineups.yaml
 problems/
@@ -117,8 +120,8 @@ Only one Ollama model should be loaded at a time (16GB VRAM). Run problems seque
 
 Model-written code never runs directly on the host.
 
-- Image: `python:3.12-slim` with pytest preinstalled (build a small `arena-grader` image)
-- `docker run --rm --network none --memory 512m --cpus 1`
+- Image: `python:3.12-slim` with pytest preinstalled, runs as a non-root user. Build with `docker build -t arena-grader docker/arena-grader`
+- `docker run --rm --network none --memory 512m --cpus 1`, plus `--read-only`, `--pids-limit`, `--cap-drop ALL`, `no-new-privileges`, `--pull never`
 - Mount a temp dir containing `solution.py` and `test_solution.py`, read-only
 - 30 second timeout, kill container on timeout
 - Return: passed (bool), tests passed/total, truncated stdout/stderr

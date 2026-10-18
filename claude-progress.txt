@@ -1,7 +1,7 @@
 # claude-progress.txt — session state
 
-Branch: feat/router-smoke
-Build order step: 1 (router + arena smoke) — DONE, smoke 2/2 passing (run 3)
+Branch: feat/grader (stacked on feat/router-smoke)
+Build order step: 1 DONE (smoke 2/2), 2 DONE (grader, 21 tests passing incl. Docker sandbox)
 
 Done
 - Package moved to src/arena (pyproject: module-name = "arena", script `arena = arena.cli:main`)
@@ -16,4 +16,11 @@ Open
 - Ollama reasoning_tokens is an estimate (Ollama doesn't split completion tokens); Anthropic uses thinking_tokens.
 - think=false can't fully disable gpt-oss thinking.
 
-Next: step 2 — arena-grader Docker image + grader.py
+Step 2
+- docker/arena-grader/Dockerfile: python:3.12-slim + pytest 9.1.1, non-root uid 10001
+  build: docker build -t arena-grader docker/arena-grader
+- plugins/code_bounty/grader.py: grade(solution, problem_dir) -> GradeResult; GraderError for sandbox failures
+- problems/001-two-sum: prompt + 6 tests
+- Docker Desktop must be running (WSL /usr/bin/docker is a stub otherwise)
+
+Next: step 3 — solo mode end to end on 3 problems (need 002, 003, roles.py, lineups.yaml, lineup.py)

@@ -28,6 +28,7 @@ src/arena/             # package (src layout; `arena` script -> arena.cli:main)
     code_bounty/
       roles.py         # system prompts for orchestrator, solo, planner, coder, reviewer
       grader.py        # runs tests in Docker, returns pass/fail + output
+      problems.py      # loads problems/, extracts code from model replies
   cli.py               # entry point
 tests/                 # pytest unit tests; grader tests skip if Docker/image missing
 docker/
@@ -39,6 +40,7 @@ problems/
   001-two-sum/
     prompt.md
     test_solution.py
+    reference.py       # known-good solution; never mounted into the sandbox
 data/
   arena.db           # gitignored
 ```
@@ -130,6 +132,7 @@ Model-written code never runs directly on the host.
 
 `problems/<id>-<slug>/prompt.md` describes the task and the exact function signature.
 `test_solution.py` does `from solution import <fn>` and uses plain pytest asserts.
+`reference.py` is a known-good solution; `tests/test_solo.py` grades every reference to prove the tests are right.
 Start with 10 problems, Advent of Code difficulty, mix of easy and medium.
 
 ## SQLite schema

@@ -50,6 +50,22 @@ CREATE TABLE IF NOT EXISTS results (
     total_cost_usd REAL,
     wall_time_ms INTEGER NOT NULL
 );
+
+-- One row per graded attempt, so the final failing grade (which no later
+-- call sees) is still in the transcript. code is NULL if the reply had none.
+CREATE TABLE IF NOT EXISTS attempts (
+    id INTEGER PRIMARY KEY,
+    run_id INTEGER NOT NULL REFERENCES runs(id),
+    problem_id TEXT NOT NULL,
+    attempt INTEGER NOT NULL,
+    code TEXT,
+    passed INTEGER NOT NULL,
+    tests_passed INTEGER,
+    tests_total INTEGER,
+    timed_out INTEGER,
+    output TEXT,
+    created_at TEXT NOT NULL
+);
 """
 
 
@@ -125,6 +141,38 @@ class RunLog:
         self.db.commit()
         assert cur.lastrowid is not None
         return cur.lastrowid
+
+    def log_attempt(
+        self,
+        *,
+        run_id: int,
+        problem_id: str,
+        attempt: int,
+        code: str | None,
+        passed: bool,
+        tests_passed: int | None = None,
+        tests_total: int | None = None,
+        timed_out: bool | None = None,
+        output: str | None = None,
+    ) -> None:
+        self.db.execute(
+            """INSERT INTO attempts (run_id, problem_id, attempt, code, passed, tests_passed,
+                   tests_total, timed_out, output, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                run_id,
+                problem_id,
+                attempt,
+                code,
+                int(passed),
+                tests_passed,
+                tests_total,
+                None if timed_out is None else int(timed_out),
+                output,
+                _now(),
+            ),
+        )
+        self.db.commit()
 
     def log_result(
         self,

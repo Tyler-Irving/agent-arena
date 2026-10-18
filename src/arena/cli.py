@@ -69,10 +69,12 @@ async def run(lineup_name: str, problem: str | None) -> int:
         return 2
 
     passed = sum(o.passed for o in outcomes)
+    scored = sum(o.error is None for o in outcomes)
+    errors = f" ({len(outcomes) - scored} not scored: model errors)" if scored < len(outcomes) else ""
     costs = [o.cost_usd for o in outcomes]
     total_cost = None if None in costs else sum(c for c in costs if c is not None)
     print(
-        f"run {run_id}: {passed}/{len(outcomes)} passed, "
+        f"run {run_id}: {passed}/{scored} passed{errors}, "
         f"{sum(o.calls for o in outcomes)} calls, {format_cost(total_cost)}, "
         f"{sum(o.wall_time_ms for o in outcomes) / 1000:.1f}s"
     )

@@ -66,7 +66,7 @@ Models to support from day one:
 | anthropic | claude-haiku-5-5, claude-sonnet-5-5, claude-opus-5-5 |
 | ollama | qwen2.5-coder:14b, gpt-oss:20b, qwen3.6:35b-a3b |
 
-Leave Anthropic prices as placeholders in `pricing.py` with a TODO. Do not guess numbers.
+Anthropic prices in `pricing.py` are copied from the Anthropic pricing page and dated in its docstring. Update them from that page; never guess numbers.
 
 ### Reasoning models
 
@@ -165,6 +165,14 @@ uv run arena scoreboard                    # pass rate, avg attempts, tokens, co
 6. Remaining 7 problems
 
 Stop after each step and confirm it works before moving on.
+
+## Checks
+
+Run before every commit (the edit hook only runs ruff on the edited file):
+
+```
+uv run ruff check src tests && uv run ruff format --check src tests && uv run pyright src tests && uv run pytest -q
+```
 
 ## Conventions
 

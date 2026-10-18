@@ -11,7 +11,7 @@ from arena.core.lineup import Lineup, load_lineups
 from arena.core.runlog import RunLog
 from arena.core.taskboard import SqliteTaskBoard
 from arena.models.router import ModelResponse
-from arena.plugins.code_bounty.grader import GradeResult, grade
+from arena.plugins.code_bounty.grader import GraderError, GradeResult, grade
 from arena.plugins.code_bounty.problems import PROBLEMS_DIR, extract_code, load_problems
 
 # --- lineups ---------------------------------------------------------------
@@ -32,6 +32,16 @@ def test_role_shorthand_and_think() -> None:
 def test_missing_roles_rejected() -> None:
     with pytest.raises(ValidationError, match="missing roles"):
         Lineup.model_validate({"name": "x", "mode": "team", "roles": {"coder": "ollama/x"}})
+
+
+def test_think_false_rejected_where_thinking_cannot_be_disabled() -> None:
+    def no_think(model: str) -> dict:
+        return {"name": "x", "mode": "solo", "roles": {"solo": {"model": model, "think": False}}}
+
+    with pytest.raises(ValidationError, match="cannot turn thinking off"):
+        Lineup.model_validate(no_think("anthropic/claude-opus-5-5"))
+    for model in ("anthropic/claude-sonnet-5-5", "anthropic/claude-haiku-5-5", "ollama/gpt-oss:20b"):
+        Lineup.model_validate(no_think(model))
 
 
 def test_config_lineups_load() -> None:
@@ -178,5 +188,28 @@ def test_solo_model_error_fails_problem(monkeypatch, tmp_path) -> None:
     log, _, outcome, _ = _run_solo(monkeypatch, tmp_path, [RuntimeError("boom")], [])
 
     assert not outcome.passed and outcome.error == "RuntimeError: boom"
+    assert outcome.attempts == 0
     reason = SqliteTaskBoard(tmp_path / "arena.db").db.execute("SELECT reason FROM tasks").fetchone()[0]
     assert reason == "RuntimeError: boom"
+    # a provider error says nothing about the lineup, so it is not a scored trial
+    assert log.db.execute("SELECT COUNT(*) FROM results").fetchone()[0] == 0
+
+
+def test_grader_error_marks_task_failed_and_aborts(monkeypatch, tmp_path) -> None:
+    async def fake_complete(model, system, messages, **kwargs):
+        return _reply("```python\ngood\n```")
+
+    async def broken_grade(code, problem_dir):
+        raise GraderError("docker went away")
+
+    monkeypatch.setattr(orchestrator, "complete", fake_complete)
+    monkeypatch.setattr(orchestrator, "grade", broken_grade)
+    log = RunLog(tmp_path / "arena.db")
+    lineup = Lineup.model_validate({"name": "fake-solo", "mode": "solo", "roles": {"solo": "fake/model"}})
+    board = SqliteTaskBoard(tmp_path / "arena.db")
+    with pytest.raises(GraderError):
+        asyncio.run(orchestrator.run_lineup(lineup, load_problems("001"), board, log))
+
+    status, reason = board.db.execute("SELECT status, reason FROM tasks").fetchone()
+    assert (status, reason) == ("failed", "grader error: docker went away")
+    assert log.db.execute("SELECT finished_at FROM runs").fetchone()[0] is not None

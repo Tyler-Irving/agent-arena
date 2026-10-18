@@ -6,6 +6,8 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, field_validator, model_validator
 
+from arena.models.router import can_disable_thinking
+
 LINEUPS_FILE = Path("config/lineups.yaml")
 
 REQUIRED_ROLES = {
@@ -35,6 +37,9 @@ class Lineup(BaseModel):
         missing = REQUIRED_ROLES[self.mode] - self.roles.keys()
         if missing:
             raise ValueError(f"{self.mode} lineup {self.name!r} is missing roles: {sorted(missing)}")
+        for role, cfg in self.roles.items():
+            if cfg.think is False and not can_disable_thinking(cfg.model):
+                raise ValueError(f"lineup {self.name!r} role {role}: {cfg.model} cannot turn thinking off")
         return self
 
 

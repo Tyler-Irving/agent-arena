@@ -150,12 +150,16 @@ async def _complete_anthropic(
     kwargs: dict = {}
     if system:
         kwargs["system"] = system
-    if think is True:
-        kwargs["thinking"] = {"type": "adaptive"}
-    elif think is False:
+    if think is False:
         if name not in _ANTHROPIC_THINKING_OFF:
             raise ValueError(f"{name} cannot turn thinking off")
         kwargs["thinking"] = _ANTHROPIC_THINKING_OFF[name]
+    else:
+        # Adaptive is what these models do when `thinking` is omitted, so think=None
+        # and think=True are the same. Ask for a readable summary of the reasoning:
+        # the API's default display is "omitted", which returns empty thinking text
+        # and leaves the run log with nothing to read. Billing is the same either way.
+        kwargs["thinking"] = {"type": "adaptive", "display": "summarized"}
 
     msg = await _anthropic_client().messages.create(
         model=name, messages=cast(list[MessageParam], messages), max_tokens=max_tokens, **kwargs

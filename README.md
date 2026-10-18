@@ -88,6 +88,13 @@ Each problem is a folder in [`problems/`](problems):
 | `test_solution.py` | Hidden pytest suite (`from solution import <fn>`) |
 | `reference.py` | Known-good solution, used only to prove the tests are right |
 
+| Problem | Level |
+| --- | --- |
+| 001 two sum, 002 merge intervals, 003 weighted maze | easy |
+| 004 bracket expand, 005 version order, 006 wraparound regions, 008 rate limiter | medium |
+| 007 integer calculator | medium-hard |
+| 009 next cron run, 010 settle debts | hard |
+
 ## Safety
 
 Model-written code never runs on the host. Each grade runs in a fresh container with
@@ -128,7 +135,10 @@ uv run ruff check src tests && uv run pyright src tests && uv run pytest -q
 | 3. Solo mode end to end | ✅ | `step-3-solo` |
 | 4. Run log + scoreboard | ✅ | `step-4-scoreboard` |
 | 5. Team mode | ✅ | `step-5-team` |
-| 6. Ten problems, mostly medium or harder | ⏳ | |
+| 6. Ten problems, mostly medium or harder | ✅ | `step-6-problems` |
 
-So far every lineup solves the three starter problems on the first try, so step 6 is
-about harder problems that actually separate the lineups.
+The first three problems are warm-ups. Problems 004-010 are medium to hard, and
+each one has edge cases that its prompt states but that are easy to miss
+(right-associative `^`, cron's day-of-month OR day-of-week rule, rejected requests
+not counting toward a rate limit, ...). Several also have tests that a correct but
+slow approach fails, such as checking every minute for the next cron run.

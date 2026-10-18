@@ -1,7 +1,7 @@
 # claude-progress.txt — session state (updated 2026-10-18)
 
 ## Start here
-- Build order: steps 1-5 DONE and merged to main. Next is step 6, the remaining 7 problems.
+- Build order: steps 1-6 DONE (step 6 on feat/more-problems until merged). All 10 problems exist.
 - GitHub: https://github.com/Tyler-Irving/agent-arena (private). main has steps 1-5, merged
   through one PR per step; build steps are tagged step-1-router .. step-5-team.
 - Branch step 6 off main (e.g. feat/more-problems). Run /code-review before any PR.

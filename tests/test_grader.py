@@ -107,12 +107,12 @@ def test_stalled_container_is_retried_then_reported(monkeypatch) -> None:
     # stall check, and after the retries the grader reports a sandbox failure.
     calls = []
 
-    async def nothing_running(name: str) -> bool:
+    async def always_stalled(name: str, timeout: float) -> bool:
         calls.append(name)
-        return False
+        return True
 
     monkeypatch.setattr(grader, "STALL_CHECK_S", 1.0)
-    monkeypatch.setattr(grader, "_has_processes", nothing_running)
+    monkeypatch.setattr(grader, "_is_stalled", always_stalled)
     with pytest.raises(GraderError, match="lost track"):
         asyncio.run(grade("import time\ntime.sleep(20)\n", TWO_SUM))
     assert len(set(calls)) == grader.STALL_RETRIES + 1  # one fresh container per try
@@ -120,6 +120,45 @@ def test_stalled_container_is_retried_then_reported(monkeypatch) -> None:
         ["docker", "ps", "-aq", "--filter", "name=arena-grade-"], capture_output=True, text=True
     )
     assert leftover.stdout.strip() == ""
+
+
+@pytest.mark.docker
+def test_cancelled_grade_kills_its_container() -> None:
+    async def cancel_midway() -> None:
+        task = asyncio.create_task(grade("import time\ntime.sleep(20)\n", TWO_SUM))
+        await asyncio.sleep(2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(cancel_midway())
+    leftover = subprocess.run(
+        ["docker", "ps", "-aq", "--filter", "name=arena-grade-"], capture_output=True, text=True
+    )
+    assert leftover.stdout.strip() == ""
+
+
+@pytest.mark.docker
+def test_is_stalled_reads_container_state() -> None:
+    # The real stall can't be triggered on demand, so check each state it reads.
+    def docker(*args: str) -> str:
+        return subprocess.run(["docker", *args], capture_output=True, text=True, check=True).stdout.strip()
+
+    created = docker("create", grader.IMAGE, "true")
+    running = docker("run", "-d", grader.IMAGE, "sleep", "30")
+    exited = docker("run", "-d", grader.IMAGE, "true")
+    docker("wait", exited)
+    try:
+
+        def stalled(container: str) -> bool:
+            return asyncio.run(grader._is_stalled(container, 10))
+
+        assert stalled(created) is False  # still starting
+        assert stalled(running) is False  # has a process
+        assert stalled(exited) is True  # exited, but its docker run would still be waiting
+        assert stalled("arena-grade-no-such-container") is True
+    finally:
+        docker("rm", "-f", created, running, exited)
 
 
 SANDBOX_TESTS = """

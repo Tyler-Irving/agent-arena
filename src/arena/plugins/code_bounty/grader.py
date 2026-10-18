@@ -27,6 +27,8 @@ MAX_OUTPUT_CHARS = 4000
 STALL_CHECK_S = 5.0
 STALL_POLL_S = 2.0
 STALL_RETRIES = 2
+# Upper bound on the short docker commands the grader runs alongside a grade.
+DOCKER_CMD_TIMEOUT_S = 10.0
 
 # pytest's -q summary line, e.g. "1 failed, 5 passed in 0.04s"
 _SUMMARY_COUNT = re.compile(r"(\d+) (passed|failed|errors?)\b")
@@ -128,27 +130,28 @@ async def _run(workdir: Path, timeout_s: float) -> GradeResult:
     deadline = start + timeout_s
     check_at = start + STALL_CHECK_S
     timed_out = stalled = False
-    while True:
-        wait_s = min(deadline, check_at) - time.perf_counter()
-        if wait_s > 0:
-            await asyncio.wait({output}, timeout=wait_s)
-        if output.done():
-            break
-        if time.perf_counter() >= deadline:
-            timed_out = True
-            break
-        if not await _has_processes(name):
-            stalled = True
-            break
-        check_at = time.perf_counter() + STALL_POLL_S
-    if timed_out or stalled:
-        # Killing the docker CLI would leave the container running; kill the container.
-        killer = await asyncio.create_subprocess_exec(
-            "docker", "kill", name,
-            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
-        )  # fmt: skip
-        await killer.wait()
-    out, err = await output
+    try:
+        while True:
+            wait_s = min(deadline, check_at) - time.perf_counter()
+            if wait_s > 0:
+                await asyncio.wait({output}, timeout=wait_s)
+            if output.done():
+                break
+            if time.perf_counter() >= deadline:
+                timed_out = True
+                break
+            # Keep the check from pushing the grade past its deadline.
+            check_timeout = min(DOCKER_CMD_TIMEOUT_S, max(1.0, deadline - time.perf_counter()))
+            # The grade may finish while the check runs; then it isn't stalled.
+            if await _is_stalled(name, check_timeout) and not output.done():
+                stalled = True
+                break
+            check_at = time.perf_counter() + STALL_POLL_S
+    finally:
+        # Timed out, stalled, or cancelled: don't leave the container running.
+        if not output.done():
+            await _stop(name, proc, output)
+    out, err = output.result()
     if stalled:
         raise _Stalled
     duration_ms = int((time.perf_counter() - start) * 1000)
@@ -175,20 +178,55 @@ async def _run(workdir: Path, timeout_s: float) -> GradeResult:
     )
 
 
-async def _has_processes(name: str) -> bool:
-    """Whether anything is still running in the container. True if docker can't say."""
-    proc = await asyncio.create_subprocess_exec(
-        "docker", "top", name,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-    )  # fmt: skip
+async def _docker(*args: str, timeout: float) -> tuple[int | None, str]:
+    """Run a short docker command. Returns (exit code, stdout); None on timeout."""
     try:
-        out, _ = await asyncio.wait_for(proc.communicate(), 10)
+        proc = await asyncio.create_subprocess_exec(
+            "docker", *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
+        )
+    except FileNotFoundError as e:
+        raise GraderError("docker CLI not found") from e
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout)
     except TimeoutError:
         proc.kill()
+        await proc.wait()
+        return None, ""
+    return proc.returncode, out.decode(errors="replace")
+
+
+async def _is_stalled(name: str, timeout: float) -> bool:
+    """Whether docker has lost track of a container whose `docker run` hasn't returned.
+
+    Stalled if the container is gone, has exited, or is "running" with no
+    processes. A container still being created, or a slow docker, is not.
+    (A grade ending at the exact moment of a check can look stalled; that
+    only costs a re-run.)
+    """
+    code, status = await _docker("inspect", "--format", "{{.State.Status}}", name, timeout=timeout)
+    if code is None:
+        return False
+    if code != 0:  # no such container
         return True
-    if proc.returncode != 0:  # not started yet, or already gone
+    status = status.strip()
+    if status == "created":
+        return False
+    if status != "running":  # exited, dead, removing
         return True
-    return len(out.decode(errors="replace").strip().splitlines()) > 1  # header + processes
+    code, top = await _docker("top", name, timeout=timeout)
+    return code == 0 and len(top.strip().splitlines()) <= 1  # only the header line
+
+
+async def _stop(name: str, proc: asyncio.subprocess.Process, output: asyncio.Future) -> None:
+    """Kill the container, and make sure the `docker run` attached to it exits too."""
+    # Killing only the docker CLI would leave the container running.
+    await _docker("kill", name, timeout=DOCKER_CMD_TIMEOUT_S)
+    await asyncio.wait({output}, timeout=DOCKER_CMD_TIMEOUT_S)
+    if not output.done():
+        # The kill didn't unblock `docker run`, which a stall can cause.
+        proc.kill()
+        await output
+        await _docker("rm", "-f", name, timeout=DOCKER_CMD_TIMEOUT_S)
 
 
 def parse_summary(stdout: str) -> tuple[int, int]:

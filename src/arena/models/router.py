@@ -47,8 +47,18 @@ class _Raw(NamedTuple):
     truncated: bool
 
 
-# Current Claude models think adaptively when `thinking` is omitted. Turning it
-# off takes a different setting per model, and some models can't turn it off.
+# Claude models that think adaptively when `thinking` is omitted. For these the
+# router sends that same setting explicitly, only to ask for a readable summary
+# (see anthropic_thinking). Other models get no `thinking` unless asked.
+_ANTHROPIC_ADAPTIVE_BY_DEFAULT = {
+    "claude-fable-5-1",
+    "claude-opus-5-5",
+    "claude-sonnet-5-5",
+    "claude-haiku-5-5",
+}
+
+# Turning thinking off takes a different setting per model, and some models
+# can't turn it off.
 _ANTHROPIC_THINKING_OFF: dict[str, dict] = {
     "claude-haiku-5-5": {"type": "disabled"},
     "claude-sonnet-5-5": {"type": "between_tools"},
@@ -96,7 +106,10 @@ async def complete(
 ) -> ModelResponse:
     """Send one chat turn to `model` and return the answer with reasoning split out.
 
-    think=None leaves the model's default; True/False asks for thinking on/off.
+    think=None keeps the model's default thinking behaviour; True/False asks for
+    thinking on/off. When an Anthropic model thinks, `reasoning` is the API's
+    summary of it (the raw chain of thought is never returned) while
+    reasoning_tokens counts all of it.
     run_id, problem_id and role only tag the run log entry.
     """
     provider, _, name = model.partition("/")
@@ -150,12 +163,9 @@ async def _complete_anthropic(
     kwargs: dict = {}
     if system:
         kwargs["system"] = system
-    if think is True:
-        kwargs["thinking"] = {"type": "adaptive"}
-    elif think is False:
-        if name not in _ANTHROPIC_THINKING_OFF:
-            raise ValueError(f"{name} cannot turn thinking off")
-        kwargs["thinking"] = _ANTHROPIC_THINKING_OFF[name]
+    thinking = anthropic_thinking(name, think)
+    if thinking is not None:
+        kwargs["thinking"] = thinking
 
     msg = await _anthropic_client().messages.create(
         model=name, messages=cast(list[MessageParam], messages), max_tokens=max_tokens, **kwargs
@@ -172,6 +182,20 @@ async def _complete_anthropic(
         reasoning_tokens=(details.thinking_tokens or 0) if details else 0,
         truncated=msg.stop_reason == "max_tokens",
     )
+
+
+def anthropic_thinking(name: str, think: bool | None) -> dict | None:
+    """The `thinking` request parameter for a Claude model, or None to omit it."""
+    if think is False:
+        if name not in _ANTHROPIC_THINKING_OFF:
+            raise ValueError(f"{name} cannot turn thinking off")
+        # between_tools accepts no other field, so its thinking can't be summarized.
+        return _ANTHROPIC_THINKING_OFF[name]
+    if think is None and name not in _ANTHROPIC_ADAPTIVE_BY_DEFAULT:
+        return None
+    # The API's default display is "omitted", which returns empty thinking text
+    # and leaves the run log nothing to read. A summary bills the same.
+    return {"type": "adaptive", "display": "summarized"}
 
 
 async def _complete_ollama(

@@ -4,7 +4,7 @@ import pytest
 
 from arena.core.runlog import RunLog
 from arena.models.pricing import cost_usd
-from arena.models.router import estimate_reasoning_tokens, split_think_tags
+from arena.models.router import anthropic_thinking, estimate_reasoning_tokens, split_think_tags
 
 
 @pytest.mark.parametrize(
@@ -74,3 +74,30 @@ def test_runlog_adds_columns_to_older_databases(tmp_path) -> None:
     columns = {row["name"] for row in log.db.execute("PRAGMA table_info(calls)")}
     assert "truncated" in columns
     RunLog(db)  # opening again is a no-op
+
+
+SUMMARIZED = {"type": "adaptive", "display": "summarized"}
+
+
+@pytest.mark.parametrize(
+    ("name", "think", "expected"),
+    [
+        # thinks by default: send the same adaptive setting, asking for a summary
+        ("claude-haiku-5-5", None, SUMMARIZED),
+        ("claude-opus-5-5", None, SUMMARIZED),
+        ("claude-opus-5-5", True, SUMMARIZED),
+        # unknown default: leave it alone unless thinking is asked for
+        ("claude-some-future-model", None, None),
+        ("claude-some-future-model", True, SUMMARIZED),
+        # each model's own off switch
+        ("claude-haiku-5-5", False, {"type": "disabled"}),
+        ("claude-sonnet-5-5", False, {"type": "between_tools"}),
+    ],
+)
+def test_anthropic_thinking(name: str, think: bool | None, expected: dict | None) -> None:
+    assert anthropic_thinking(name, think) == expected
+
+
+def test_anthropic_thinking_off_unsupported() -> None:
+    with pytest.raises(ValueError, match="cannot turn thinking off"):
+        anthropic_thinking("claude-opus-5-5", False)

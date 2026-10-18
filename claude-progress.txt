@@ -53,8 +53,9 @@
 - Ollama reasoning_tokens is a character-share estimate; Anthropic reports thinking_tokens exactly.
 - think=false can't fully disable gpt-oss thinking.
 - Anthropic think=false: Haiku 5.5 -> disabled, Sonnet 5.5 -> between_tools, Opus 5.5 can't
-  (lineup load fails). Anthropic thinking text is empty in the log because the API's default
-  display is "omitted"; setting display "summarized" would store a readable summary. Not done.
+  (lineup load fails). With thinking on, the router asks for display "summarized", so
+  calls.reasoning holds a readable summary for Anthropic models (the raw chain of thought is
+  never returned). Ollama models store their full reasoning.
 - Provider errors are not scored (no results row); the CLI reports them as "not scored".
 - Replies cut off at max_tokens are flagged (calls.truncated) and get token-limit feedback.
 - A deliberately adversarial solution could still fake pytest's summary line; the grader only

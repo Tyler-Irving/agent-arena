@@ -242,6 +242,8 @@ async def solve_team(problem: Problem, team: dict[str, RoleConfig], run_id: int,
         last_code: str | None = None
         last_feedback: str | None = None
         no_code_note: str | None = None
+        plan_number = 1
+        history: list[roles.PastAttempt] = []  # what the orchestrator sees of earlier attempts
 
         while attempt < MAX_ATTEMPTS:
             feedback = "\n\n".join(f for f in (no_code_note, last_feedback) if f) or None
@@ -254,6 +256,7 @@ async def solve_team(problem: Problem, team: dict[str, RoleConfig], run_id: int,
             graded = await session.grade(attempt, reply)
             if graded is None:
                 no_code_note = roles.no_code_feedback(reply.truncated)
+                history.append(roles.PastAttempt(attempt, plan_number, roles.attempt_outcome(None), None))
                 continue
             code, result = graded
             if result.passed:
@@ -272,7 +275,7 @@ async def solve_team(problem: Problem, team: dict[str, RoleConfig], run_id: int,
             reply = await ask(
                 "orchestrator",
                 roles.ORCHESTRATOR_SYSTEM,
-                roles.decide_task(prompt, plan, result, review, attempt, attempts_left),
+                roles.decide_task(prompt, plan, plan_number, result, review, attempt, attempts_left, history),
             )
             decision = roles.parse_decision(reply.text)
             if decision is None:
@@ -280,15 +283,20 @@ async def solve_team(problem: Problem, team: dict[str, RoleConfig], run_id: int,
                 decision = "retry"
             else:
                 print(f"   orchestrator: {decision} ({model_note(reply)})")
+            history.append(roles.PastAttempt(attempt, plan_number, roles.attempt_outcome(result), decision))
+            lead_reason = reply.text or "(no reason given)"
 
             if decision == "give_up":
                 stop_reason = "orchestrator gave up"
                 break
             if decision == "replan":
                 reply = await ask(
-                    "planner", roles.PLANNER_SYSTEM, roles.replan_task(prompt, plan, code, result, review)
+                    "planner",
+                    roles.PLANNER_SYSTEM,
+                    roles.replan_task(prompt, plan, code, result, review, lead_reason),
                 )
                 plan = reply.text or "(no plan)"
+                plan_number += 1
                 print(f"   replan ({model_note(reply)})")
                 # New approach: start the coder fresh rather than anchoring it on the old code.
                 last_code, last_feedback = None, None

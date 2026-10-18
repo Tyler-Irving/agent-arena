@@ -4,7 +4,7 @@ All prompt text lives here so lineups can be compared on the same wording.
 """
 
 import re
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from arena.plugins.code_bounty.grader import TIMEOUT_S, GradeResult
 
@@ -90,7 +90,7 @@ def plan_task(prompt: str) -> str:
     return f"{prompt.strip()}\n\nWrite the plan."
 
 
-def replan_task(prompt: str, plan: str, code: str, result: GradeResult, review: str) -> str:
+def replan_task(prompt: str, plan: str, code: str, result: GradeResult, review: str, lead_reason: str) -> str:
     return (
         f"{prompt.strip()}\n\n"
         f"Your previous plan:\n{plan.strip()}\n\n"
@@ -98,7 +98,8 @@ def replan_task(prompt: str, plan: str, code: str, result: GradeResult, review: 
         f"Code:\n```python\n{code.strip()}\n```\n\n"
         f"{grade_report(result)}\n\n"
         f"Reviewer's feedback:\n{review.strip()}\n\n"
-        "The team lead decided the approach itself needs to change. Write a new plan."
+        f"The team lead decided the plan needs to change:\n{lead_reason.strip()}\n\n"
+        "Write a new plan."
     )
 
 
@@ -148,9 +149,15 @@ You lead a small team solving a Python coding problem. A planner writes the \
 approach, a coder writes the code, a hidden pytest suite grades it, and a \
 reviewer explains failures.
 
-The latest attempt failed. Decide what happens next:
-- RETRY: the plan is sound; the coder should fix the code using the review.
-- REPLAN: the approach itself is wrong or too slow; the planner writes a new plan.
+The latest attempt failed. You are shown every earlier attempt and what you \
+decided after it. Decide what happens next:
+- RETRY: the plan is sound and the coder can fix the code using the review. \
+The coder keeps following the current plan, so only retry if the fix fits \
+within it.
+- REPLAN: the planner writes a new plan. Choose this when the approach is \
+wrong or too slow, when the fix needs a different approach than the plan \
+describes, or when the coder has failed more than once with this plan and a \
+simpler approach would be easier to get right.
 - GIVE_UP: more attempts will not solve it.
 
 Reply with one line `DECISION: RETRY`, `DECISION: REPLAN` or \
@@ -159,17 +166,49 @@ Reply with one line `DECISION: RETRY`, `DECISION: REPLAN` or \
 Decision = Literal["retry", "replan", "give_up"]
 
 
+class PastAttempt(NamedTuple):
+    """An earlier attempt, as the orchestrator sees it when deciding."""
+
+    attempt: int
+    plan: int  # 1 for the first plan, 2 after one replan, ...
+    outcome: str  # e.g. "3/13 tests passed"
+    decision: Decision | None  # None when the coder was simply asked again (no code)
+
+
+def attempt_outcome(result: GradeResult | None) -> str:
+    if result is None:
+        return "the reply had no code block"
+    if result.timed_out:
+        return "timed out"
+    return f"{result.tests_passed}/{result.tests_total} tests passed"
+
+
 def decide_task(
-    prompt: str, plan: str, result: GradeResult, review: str, attempt: int, attempts_left: int
+    prompt: str,
+    plan: str,
+    plan_number: int,
+    result: GradeResult,
+    review: str,
+    attempt: int,
+    attempts_left: int,
+    history: list[PastAttempt],
 ) -> str:
-    return (
-        f"{prompt.strip()}\n\n"
-        f"Plan:\n{plan.strip()}\n\n"
-        f"Attempt {attempt} failed. {attempts_left} attempt(s) left.\n\n"
-        f"{grade_report(result)}\n\n"
-        f"Reviewer's feedback:\n{review.strip()}\n\n"
-        "RETRY, REPLAN or GIVE_UP?"
-    )
+    parts = [prompt.strip(), f"Current plan (plan {plan_number}):\n{plan.strip()}"]
+    if history:
+        lines = []
+        for past in history:
+            line = f"- Attempt {past.attempt} (plan {past.plan}): {past.outcome}."
+            if past.decision is not None:
+                line += f" You chose {past.decision.upper()}."
+            lines.append(line)
+        parts.append("Earlier attempts:\n" + "\n".join(lines))
+    parts += [
+        f"Attempt {attempt} (plan {plan_number}) failed. {attempts_left} attempt(s) left.",
+        grade_report(result),
+        f"Reviewer's feedback:\n{review.strip()}",
+        "RETRY, REPLAN or GIVE_UP?",
+    ]
+    return "\n\n".join(parts)
 
 
 _DECISION_LINE = re.compile(r"DECISION:\s*\**\s*(RETRY|REPLAN|GIVE[ _-]?UP)", re.IGNORECASE)

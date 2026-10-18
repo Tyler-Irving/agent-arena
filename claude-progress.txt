@@ -1,0 +1,19 @@
+# claude-progress.txt — session state
+
+Branch: feat/router-smoke
+Build order step: 1 (router + arena smoke) — DONE, smoke 2/2 passing (run 3)
+
+Done
+- Package moved to src/arena (pyproject: module-name = "arena", script `arena = arena.cli:main`)
+- models/router.py: complete() over anthropic + ollama, reasoning split (field + <think> tags), every call logged
+- models/pricing.py: ollama = 0, anthropic prices filled in (2026-10-16), Haiku long-prompt tier >100K input
+- core/runlog.py: runs / calls / results tables in data/arena.db; calls keep prompt, response, reasoning, error
+- cli.py: `uv run arena smoke [--model provider/name ...]`
+- tests/test_router.py: think-tag splitting, reasoning estimate, pricing, runlog (9 passing)
+- ruff + pyright added as dev deps; both clean
+
+Open
+- Ollama reasoning_tokens is an estimate (Ollama doesn't split completion tokens); Anthropic uses thinking_tokens.
+- think=false can't fully disable gpt-oss thinking.
+
+Next: step 2 — arena-grader Docker image + grader.py

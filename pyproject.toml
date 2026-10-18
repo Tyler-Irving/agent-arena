@@ -1,7 +1,7 @@
 [project]
 name = "agent-arena"
 version = "0.1.0"
-description = "Add your description here"
+description = "Local orchestrator/worker multi-agent arena for comparing model lineups"
 readme = "README.md"
 authors = [
     { name = "Tyler Irving", email = "tyler.i.developer@gmail.com" }
@@ -17,8 +17,23 @@ dependencies = [
 ]
 
 [project.scripts]
-agent-arena = "agent_arena:main"
+arena = "arena.cli:main"
+
+[tool.uv.build-backend]
+module-name = "arena"
 
 [build-system]
 requires = ["uv_build>=0.13.1,<0.14.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.414",
+    "ruff>=0.17.1",
+]
+
+[tool.ruff]
+line-length = 110
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

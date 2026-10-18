@@ -59,6 +59,8 @@
 - Replies cut off at max_tokens are flagged (calls.truncated) and get token-limit feedback.
 - A deliberately adversarial solution could still fake pytest's summary line; the grader only
   guards against accidental early exits. test_solution.py is readable inside the sandbox.
-- tests/test_grader.py::test_good_solution_passes failed once (empty stdout) during a slow
-  44s suite run and never again in 6+ runs; it now prints the full GradeResult if it recurs.
+- Docker Desktop 29.2.1 (WSL) sometimes misses a container's exit (~3% of back-to-back grades):
+  pytest is done but docker reports "running" and `docker run` never returns. The grader checks
+  container state after 5 s, kills a stalled container and re-grades (2 retries, then
+  GraderError). This was the cause of the intermittent test_good_solution_passes failure.
 - The VS Code Pylance "pydantic could not be resolved" warning means the interpreter isn't set to .venv/bin/python.

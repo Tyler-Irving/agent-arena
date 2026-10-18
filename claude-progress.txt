@@ -3,15 +3,15 @@
 # claude-progress.txt — session state (updated 2026-10-18)
 
 ## Start here
-- Build order: steps 1-4 DONE. Next is step 5, team mode.
-- Branch: feat/scoreboard. Stack, none pushed or merged:
-    master <- feat/router-smoke <- feat/grader <- feat/solo-mode <- feat/scoreboard
+- Build order: steps 1-5 DONE (step 5 awaiting your confirmation). Next is step 6, the remaining 7 problems.
+- Branch: feat/team-mode. Stack, none pushed or merged:
+    master <- feat/router-smoke <- feat/grader <- feat/solo-mode <- feat/scoreboard <- feat/team-mode
   The repo has no `main` branch yet, only master. Run /review before any PR.
-- Branch step 5 off feat/scoreboard (e.g. feat/team-mode) unless the stack has been merged.
+- Branch step 6 off feat/team-mode (e.g. feat/more-problems) unless the stack has been merged.
 - Docker Desktop must be running. In WSL, /usr/bin/docker is a stub until it starts.
   Start from WSL: cmd.exe /c start "" "C:\Program Files\Docker\Docker\Docker Desktop.exe"
 - Verify the state before changing anything:
-    uv run ruff check src tests && uv run pyright src tests && uv run pytest -q   # 43 passing
+    uv run ruff check src tests && uv run pyright src tests && uv run pytest -q   # 56 passing
     uv run arena scoreboard
 
 ## What exists
@@ -24,25 +24,30 @@
 - core/lineup.py + config/lineups.yaml: a role is a model string or {model, think}.
   Team lineups validate orchestrator/planner/coder/reviewer.
 - core/taskboard.py: async TaskBoard Protocol plus a SQLite implementation (atomic claim).
-- core/orchestrator.py: run_lineup() + solve_solo(). MAX_ATTEMPTS=3, MAX_CALLS=20.
-  Team mode raises NotImplementedError.
+- core/orchestrator.py: run_lineup() -> solve_solo() | solve_team(). MAX_ATTEMPTS=3, MAX_CALLS=20,
+  enforced by Session (counts calls + cost, grades and logs attempts). Team loop: planner ->
+  coder -> grader; on failure reviewer -> orchestrator (DECISION: RETRY|REPLAN|GIVE_UP,
+  unparseable = retry). Every team call is a fresh 1-message conversation (current plan +
+  latest attempt only). Replan restarts the coder without the old code. Reviewer and
+  orchestrator are skipped after the last attempt and after a reply with no code.
+  Worst case 10 calls/problem. Outcome.gave_up marks an orchestrator give-up.
 - core/scoreboard.py: every result in every code_bounty run is one trial.
 - plugins/code_bounty: grader.py (Docker sandbox, GraderError for infra failures),
-  roles.py (solo prompts only), problems.py (loading + extract_code).
+  roles.py (solo + team prompts, parse_decision), problems.py (loading + extract_code).
 - problems 001-003, each with a reference.py that tests/test_solo.py grades.
 - CLI: arena smoke | run --lineup X [--problem 001] | scoreboard
 
 ## Runs in data/arena.db (gitignored)
 - 1-3 smoke; 4 haiku-solo 3/3 ($0.0006); 5 qwen14b-solo 3/3; 6 gptoss-solo 3/3.
-- Every lineup solved every problem on the first try, so the problems are too easy to separate models.
+- 7 all-local-gptoss 3/3 (6 calls); 8 sonnet-orch-qwen14b 3/3 ($0.0199).
+- Every lineup solved every problem on the first try, so the problems are too easy to separate models,
+  and no real run has reached the reviewer/orchestrator yet. That path was checked once per team
+  lineup by planting a bug in attempt 1 (scratch db, not in arena.db): both reviewers found it,
+  both orchestrators replied `DECISION: RETRY`, attempt 2 passed.
 
-## Step 5 notes (team mode)
-- Loop is in CLAUDE.md "Orchestrator loop (team mode)": planner -> coder -> grader ->
-  reviewer on failure -> orchestrator decides retry / replan / give up.
-- Team prompts go in roles.py. Log role names planner/coder/reviewer/orchestrator in calls.
-- Keep MAX_ATTEMPTS / MAX_CALLS per problem. Only one Ollama model fits in VRAM, so a mixed
-  lineup swaps models between calls; that load time is real and shows up in wall time.
-- tests/test_solo.py shows the pattern for testing the loop with fake complete() and grade().
+## Step 6 notes
+- Harder problems are what will exercise review / replan / give-up for real; watch how often
+  each orchestrator picks REPLAN vs RETRY and whether GIVE_UP ever fires early.
 
 ## Open decisions / known issues
 - Local-model wall time includes the cold load on a run's first problem (gpt-oss ~25s).

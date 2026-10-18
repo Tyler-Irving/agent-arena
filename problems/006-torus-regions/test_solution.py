@@ -64,16 +64,19 @@ def test_large_single_region():
 
 
 def test_large_snake():
-    # one long path through the whole grid: rows of A joined by alternating end cells
+    # one long winding path: rows of A joined at alternating ends. The last
+    # column is water, so the wrap can't join the two ends of a row and the
+    # path really is ~80,000 cells long
     width, height = 401, 401
     grid = []
     for r in range(height):
         if r % 2 == 0:
-            grid.append("A" * width)
+            row = "A" * (width - 1)
         elif r % 4 == 1:
-            grid.append("." * (width - 1) + "A")
+            row = "." * (width - 2) + "A"
         else:
-            grid.append("A" + "." * (width - 1))
+            row = "A" + "." * (width - 2)
+        grid.append(row + ".")
     assert count_regions(grid) == 1
 
 

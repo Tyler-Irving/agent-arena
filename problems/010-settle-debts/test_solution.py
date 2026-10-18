@@ -1,3 +1,4 @@
+import time
 from collections import defaultdict
 
 from solution import settle
@@ -84,7 +85,9 @@ def test_twelve_people_in_four_hidden_groups():
     }  # fmt: skip
     # four groups of three that each sum to zero: 4 * 2 = 8 transfers
     # (largest-debtor-pays-largest-creditor needs 11)
+    start = time.perf_counter()
     check(through_hub(balances), 8)
+    assert time.perf_counter() - start < 2.0, "must not try every possible set of transfers"
 
 
 def test_twelve_people_no_shortcut():
@@ -92,7 +95,9 @@ def test_twelve_people_no_shortcut():
     names = ["amy", "ben", "cal", "dee", "eli", "fay", "gus", "hal", "ivy", "jon", "kim"]
     balances = {name: -(2**i) for i, name in enumerate(names)}
     balances["lou"] = 2**11 - 1
+    start = time.perf_counter()
     check(through_hub(balances), 11)
+    assert time.perf_counter() - start < 2.0, "must not try every possible set of transfers"
 
 
 def test_mixed_records():

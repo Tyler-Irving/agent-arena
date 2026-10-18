@@ -13,9 +13,10 @@ integer, and a person never pays themselves.
 People whose net balance is already zero must not appear in any transfer.
 
 If several answers use the fewest transfers, any of them is accepted. At most
-12 people have a non-zero balance, which is too many to try every possible set
-of transfers, and simply matching the largest debtor with the largest creditor
-does not always give the fewest transfers.
+12 people have a non-zero balance, and the function must answer in well under
+a second for 12, which is too many to try every possible set of transfers.
+Simply matching the largest debtor with the largest creditor does not always
+give the fewest transfers.
 
 ## Signature
 

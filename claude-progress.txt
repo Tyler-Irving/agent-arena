@@ -4,11 +4,11 @@
 - Build order: steps 1-6 DONE (step 6 on feat/more-problems until merged). All 10 problems exist.
 - GitHub: https://github.com/Tyler-Irving/agent-arena (private). main has steps 1-5, merged
   through one PR per step; build steps are tagged step-1-router .. step-5-team.
-- Branch step 6 off main (e.g. feat/more-problems). Run /code-review before any PR.
+- Run /code-review before any PR.
 - Docker Desktop must be running. In WSL, /usr/bin/docker is a stub until it starts.
   Start from WSL: cmd.exe /c start "" "C:\Program Files\Docker\Docker\Docker Desktop.exe"
 - Verify the state before changing anything:
-    uv run ruff check src tests && uv run pyright src tests && uv run pytest -q   # 63 passing
+    uv run ruff check src tests && uv run pyright src tests && uv run pytest -q   # 82 passing
     uv run arena scoreboard
 
 ## What exists

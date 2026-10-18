@@ -55,6 +55,14 @@ def test_division_identity():
             assert abs(r) < abs(b)
 
 
+def test_big_integer_division_is_exact():
+    # float division would lose digits here
+    assert evaluate("(10^20 + 1) / 3") == (10**20 + 1) // 3
+    assert evaluate("-(10^20 + 1) / 3") == -((10**20 + 1) // 3)
+    assert evaluate("-(10^20 + 1) % 3") == -2  # Python's % would give 1
+    assert evaluate("(2^80 + 5) % (2^40)") == 5
+
+
 def test_left_associative_division():
     assert evaluate("100 / 10 / 5") == 2
     assert evaluate("100 % 7 * 2") == 4

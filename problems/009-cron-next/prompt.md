@@ -22,11 +22,14 @@ Each field is a comma-separated list of one or more items. An item is:
   the `*` or range: `*/15` in the minute field is `0,15,30,45`, `*/10` in the
   day-of-month field is `1,11,21,31`, and `1-10/4` is `1,5,9`
 
-**Day matching** follows classic cron: if both the day-of-month and the
-day-of-week fields are restricted (anything other than exactly `*`), a day
-matches when **either** field matches. If one of them is exactly `*`, only the
-other one decides. For example `0 0 13 * 5` fires at midnight on every 13th of
-the month **and** on every Friday.
+**Day matching**: if both the day-of-month and the day-of-week fields are
+restricted, a day matches when **either** field matches. If one of them is
+unrestricted, only the other one decides. For example `0 0 13 * 5` fires at
+midnight on every 13th of the month **and** on every Friday.
+
+A field is unrestricted only when it is exactly `*`. Anything else is
+restricted, including `*/1` and `*/2`. (Some cron implementations treat any
+field starting with `*` as unrestricted; this one does not.)
 
 Return the first minute that is **strictly later** than `after` and matches
 every field, as a `datetime` with seconds and microseconds set to 0. Any

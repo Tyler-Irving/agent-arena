@@ -24,7 +24,11 @@ like C or Java and **unlike** Python's `//` and `%`:
 - for any `a` and non-zero `b`: `(a / b) * b + a % b == a`
 
 Dividing or taking the remainder by zero raises `ZeroDivisionError`. Exponents
-are never negative. Results can be arbitrarily large integers.
+are never negative, and `0^0` is `1`. Numbers and results can be arbitrarily
+large integers, so don't go through floating point.
+
+Expressions can be long (thousands of terms) and nested up to 100 parentheses
+deep, so don't recurse once per operator.
 
 ## Signature
 

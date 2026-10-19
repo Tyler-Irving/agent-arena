@@ -1,6 +1,7 @@
 # A lineup is a mode plus a model per role. A role is a model string, or
 # {model: ..., think: true|false} to force thinking on or off.
-# max_attempts (default 3) is the number of graded attempts per problem.
+# max_attempts (default 3) is the number of graded attempts per problem; it
+# must fit in the 20-call limit (team: at most 5).
 
 # --- solo ---------------------------------------------------------------
 
@@ -34,7 +35,7 @@ qwen36-nothink-solo:
 
 # --- team ---------------------------------------------------------------
 
-sonnet-orch-qwen14b:
+sonnet-orch-qwen14b: &sonnet-orch-qwen14b
   mode: team
   roles:
     orchestrator: anthropic/claude-sonnet-5-5
@@ -43,15 +44,10 @@ sonnet-orch-qwen14b:
     reviewer: ollama/qwen2.5-coder:14b
 
 # Same team with two more attempts: does a replan pay off when the new plan
-# gets more than one try?
+# gets more than one try? The merge key keeps the roles identical to the one above.
 sonnet-orch-qwen14b-5att:
-  mode: team
+  <<: *sonnet-orch-qwen14b
   max_attempts: 5
-  roles:
-    orchestrator: anthropic/claude-sonnet-5-5
-    planner: anthropic/claude-sonnet-5-5
-    coder: ollama/qwen2.5-coder:14b
-    reviewer: ollama/qwen2.5-coder:14b
 
 all-local-gptoss:
   mode: team

@@ -17,7 +17,7 @@ from typing import NamedTuple
 
 from pydantic import BaseModel
 
-from arena.core.lineup import DEFAULT_MAX_ATTEMPTS, Lineup, RoleConfig
+from arena.core.lineup import MAX_CALLS, Lineup, RoleConfig
 from arena.core.runlog import RunLog, set_runlog
 from arena.core.taskboard import Task, TaskBoard
 from arena.models.router import ModelResponse, complete
@@ -26,7 +26,6 @@ from arena.plugins.code_bounty.grader import GraderError, GradeResult, grade
 from arena.plugins.code_bounty.problems import Problem, extract_code
 
 PLUGIN = "code_bounty"
-MAX_CALLS = 20
 
 
 class Outcome(BaseModel):
@@ -135,7 +134,8 @@ async def run_lineup(
     `selector` is the --problem the problems were picked with, recorded on the run.
     """
     set_runlog(log)  # the router logs calls to the same database as the run
-    run_id = log.start_run(lineup.name, PLUGIN, selector)
+    run_id = log.start_run(lineup.name, PLUGIN, selector, lineup.max_attempts)
+    limit = lineup.max_attempts
     by_id = {p.id: p for p in problems}
     for p in problems:
         await board.put(run_id, p.id)
@@ -149,7 +149,6 @@ async def run_lineup(
             task = claimed
             problem = by_id[task.problem_id]
             print(f"== {problem.id}")
-            limit = lineup.max_attempts
             try:
                 if lineup.mode == "solo":
                     outcome = await solve_solo(problem, lineup.roles["solo"], run_id, log, limit)
@@ -197,7 +196,7 @@ async def run_lineup(
 
 
 async def solve_solo(
-    problem: Problem, role: RoleConfig, run_id: int, log: RunLog, max_attempts: int = DEFAULT_MAX_ATTEMPTS
+    problem: Problem, role: RoleConfig, run_id: int, log: RunLog, max_attempts: int
 ) -> Outcome:
     """One model writes code, sees test failures, and retries up to max_attempts."""
     session = Session(problem, run_id, log)
@@ -240,7 +239,7 @@ async def solve_team(
     team: dict[str, RoleConfig],
     run_id: int,
     log: RunLog,
-    max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+    max_attempts: int,
 ) -> Outcome:
     """planner -> coder -> grader, and on failure reviewer -> orchestrator decides.
 

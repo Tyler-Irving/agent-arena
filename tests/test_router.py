@@ -77,7 +77,7 @@ def test_runlog_adds_columns_to_older_databases(tmp_path) -> None:
     columns = {row["name"] for row in log.db.execute("PRAGMA table_info(calls)")}
     assert "truncated" in columns
     columns = {row["name"] for row in log.db.execute("PRAGMA table_info(runs)")}
-    assert {"problem", "interrupted"} <= columns
+    assert {"problem", "interrupted", "max_attempts"} <= columns
     RunLog(db)  # opening again is a no-op
 
 

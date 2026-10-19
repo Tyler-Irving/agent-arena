@@ -1,7 +1,8 @@
 """Scoreboard: compare lineups on pass rate, attempts, tokens, cost and time.
 
 Every problem result in every run counts as one trial, so running a lineup
-again adds data rather than replacing it. Token and time figures are
+again adds data rather than replacing it. Runs of one lineup under different
+attempt limits get separate rows. Token and time figures are
 per-problem averages. The per-run range shows how much a lineup's pass rate
 moves between runs, which is the noise any comparison has to beat. It only
 uses runs that covered every problem and weren't interrupted, so runs of
@@ -22,6 +23,7 @@ WITH call_totals AS (
     GROUP BY run_id, problem_id
 )
 SELECT runs.lineup,
+       runs.max_attempts,
        COUNT(DISTINCT runs.id) AS runs,
        COUNT(*) AS trials,
        SUM(results.passed) AS passed,
@@ -37,26 +39,27 @@ JOIN runs ON runs.id = results.run_id
 LEFT JOIN call_totals
        ON call_totals.run_id = results.run_id AND call_totals.problem_id = results.problem_id
 WHERE runs.plugin = ? AND runs.id >= ?
-GROUP BY runs.lineup
+GROUP BY runs.lineup, runs.max_attempts
 """
 
 RUN_RANGE = """
 WITH full_runs AS (
-    SELECT runs.lineup, AVG(results.passed) AS pass_rate
+    SELECT runs.lineup, runs.max_attempts, AVG(results.passed) AS pass_rate
     FROM results
     JOIN runs ON runs.id = results.run_id
     WHERE runs.plugin = ? AND runs.id >= ?
       AND runs.problem IS NULL AND runs.finished_at IS NOT NULL AND NOT COALESCE(runs.interrupted, 0)
     GROUP BY runs.id
 )
-SELECT lineup, MIN(pass_rate) AS low, MAX(pass_rate) AS high
+SELECT lineup, max_attempts, MIN(pass_rate) AS low, MAX(pass_rate) AS high
 FROM full_runs
-GROUP BY lineup
+GROUP BY lineup, max_attempts
 """
 
 
 class ScoreRow(BaseModel):
     lineup: str
+    max_attempts: int | None  # None for runs logged before the limit was recorded
     runs: int
     trials: int
     passed: int
@@ -86,13 +89,17 @@ def scoreboard(log: RunLog, plugin: str = "code_bounty", since: int | None = Non
     made before a change to the problems or the loop.
     """
     params = (plugin, since or 0)
-    ranges = {r["lineup"]: (r["low"], r["high"]) for r in log.db.execute(RUN_RANGE, params)}
+    ranges = {
+        (r["lineup"], r["max_attempts"]): (r["low"], r["high"]) for r in log.db.execute(RUN_RANGE, params)
+    }
     rows = []
     for r in log.db.execute(QUERY, params):
         cost_known = r["priced_trials"] == r["trials"]
+        low, high = ranges.get((r["lineup"], r["max_attempts"]), (None, None))
         rows.append(
             ScoreRow(
                 lineup=r["lineup"],
+                max_attempts=r["max_attempts"],
                 runs=r["runs"],
                 trials=r["trials"],
                 passed=r["passed"],
@@ -102,8 +109,8 @@ def scoreboard(log: RunLog, plugin: str = "code_bounty", since: int | None = Non
                 avg_reasoning_tokens=r["avg_reasoning_tokens"] or 0,
                 total_cost_usd=(r["total_cost_usd"] or 0.0) if cost_known else None,
                 avg_wall_time_ms=r["avg_wall_time_ms"],
-                run_low=ranges.get(r["lineup"], (None, None))[0],
-                run_high=ranges.get(r["lineup"], (None, None))[1],
+                run_low=low,
+                run_high=high,
             )
         )
     return sorted(
@@ -115,6 +122,7 @@ def scoreboard(log: RunLog, plugin: str = "code_bounty", since: int | None = Non
 def format_scoreboard(rows: list[ScoreRow]) -> str:
     headers = [
         "lineup",
+        "limit",
         "runs",
         "passed",
         "pass",
@@ -130,6 +138,7 @@ def format_scoreboard(rows: list[ScoreRow]) -> str:
     table = [
         [
             r.lineup,
+            "?" if r.max_attempts is None else str(r.max_attempts),
             str(r.runs),
             f"{r.passed}/{r.trials}",
             f"{r.pass_rate:.0%}",
@@ -158,8 +167,9 @@ def format_scoreboard(rows: list[ScoreRow]) -> str:
             "  ".join("-" * w for w in widths),
             *(line(row) for row in table),
             "",
-            "per run = lowest-highest pass rate of a single full run (- if none); attempts, tokens,",
-            "cost and time are per-problem averages; total is all runs; ? = unpriced model",
+            "limit = max attempts per problem; per run = lowest-highest pass rate of a single full run",
+            "(- if none); attempts, tokens, cost and time are per-problem averages; total is all runs;",
+            "? = unpriced model, or limit not recorded",
         ]
     )
 

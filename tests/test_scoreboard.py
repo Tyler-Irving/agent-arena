@@ -92,3 +92,22 @@ def test_format(log: RunLog) -> None:
     assert "3/4" in text and "75%" in text and "$0.0200" in text
     unpriced = next(line for line in lines if line.startswith("unpriced"))
     assert unpriced.split()[-3:-1] == ["?", "?"]
+
+
+def test_per_run_range(log: RunLog) -> None:
+    rows = {r.lineup: r for r in scoreboard(log)}
+    assert sorted(rows["cheap"].run_pass_rates) == [0.5, 1.0]
+    text = format_scoreboard(scoreboard(log))
+    cheap = next(line for line in text.splitlines() if line.startswith("cheap"))
+    local = next(line for line in text.splitlines() if line.startswith("local"))
+    assert "50%-100%" in cheap.split()
+    assert local.split()[3:5] == ["100%", "100%"]  # one run: no range
+
+
+def test_since_leaves_out_earlier_runs(log: RunLog) -> None:
+    # runs 1-2 are cheap, 3 is local, 4 is unpriced
+    rows = {r.lineup: r for r in scoreboard(log, since=2)}
+    assert set(rows) == {"cheap", "local", "unpriced"}
+    assert (rows["cheap"].runs, rows["cheap"].passed, rows["cheap"].run_pass_rates) == (1, 2, [1.0])
+    assert [r.lineup for r in scoreboard(log, since=4)] == ["unpriced"]
+    assert scoreboard(log, since=99) == []

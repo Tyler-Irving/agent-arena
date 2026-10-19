@@ -2,12 +2,13 @@
 
 import argparse
 import asyncio
+import signal
 import sys
 
 from dotenv import load_dotenv
 
 from arena.core.lineup import get_lineup
-from arena.core.orchestrator import format_cost, run_lineup
+from arena.core.orchestrator import Outcome, format_cost, run_lineup
 from arena.core.runlog import get_runlog
 from arena.core.scoreboard import format_scoreboard, scoreboard
 from arena.core.taskboard import SqliteTaskBoard
@@ -49,7 +50,7 @@ async def smoke(models: list[str]) -> int:
     return 1 if failures else 0
 
 
-async def run(lineup_name: str, problem: str | None) -> int:
+async def run(lineup_name: str, problem: str | None, repeat: int) -> int:
     try:
         lineup = get_lineup(lineup_name)
     except KeyError as e:
@@ -60,32 +61,56 @@ async def run(lineup_name: str, problem: str | None) -> int:
         print(f"no problems match {problem!r}", file=sys.stderr)
         return 2
 
-    roles = ", ".join(f"{role}={cfg.model}" for role, cfg in lineup.roles.items())
-    print(f"lineup {lineup.name} ({lineup.mode}: {roles}), {len(problems)} problem(s)\n")
-    try:
-        run_id, outcomes = await run_lineup(lineup, problems, SqliteTaskBoard(), get_runlog())
-    except GraderError as e:
-        print(f"grader unavailable, run aborted: {e}", file=sys.stderr)
-        return 2
+    # Stop on SIGTERM the way asyncio.run already stops on Ctrl-C: cancel this
+    # task, so the run is finished and its in-flight task marked interrupted.
+    main_task = asyncio.current_task()
+    assert main_task is not None
+    asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, main_task.cancel)
 
+    roles = ", ".join(f"{role}={cfg.model}" for role, cfg in lineup.roles.items())
+    times = f" x {repeat} runs" if repeat > 1 else ""
+    print(f"lineup {lineup.name} ({lineup.mode}: {roles}), {len(problems)} problem(s){times}\n")
+
+    summaries = []
+    for _ in range(repeat):
+        try:
+            run_id, outcomes = await run_lineup(lineup, problems, SqliteTaskBoard(), get_runlog())
+        except GraderError as e:
+            print(f"grader unavailable, run aborted: {e}", file=sys.stderr)
+            return 2
+        summaries.append((run_id, outcomes))
+        print(summarize(run_id, outcomes) + "\n")
+
+    if repeat > 1:
+        first = summaries[0][0]
+        print(f"{repeat} runs ({first}-{summaries[-1][0]}):")
+        for run_id, outcomes in summaries:
+            print("  " + summarize(run_id, outcomes))
+        print(f"compare with earlier runs: arena scoreboard --since {first}")
+    return 0
+
+
+def summarize(run_id: int, outcomes: list[Outcome]) -> str:
     passed = sum(o.passed for o in outcomes)
     scored = sum(o.error is None for o in outcomes)
     errors = f" ({len(outcomes) - scored} not scored: model errors)" if scored < len(outcomes) else ""
     costs = [o.cost_usd for o in outcomes]
     total_cost = None if None in costs else sum(c for c in costs if c is not None)
-    print(
+    return (
         f"run {run_id}: {passed}/{scored} passed{errors}, "
         f"{sum(o.calls for o in outcomes)} calls, {format_cost(total_cost)}, "
         f"{sum(o.wall_time_ms for o in outcomes) / 1000:.1f}s"
     )
-    return 0
 
 
-def show_scoreboard() -> int:
-    rows = scoreboard(get_runlog())
+def show_scoreboard(since: int | None) -> int:
+    rows = scoreboard(get_runlog(), since=since)
     if not rows:
-        print("no runs yet; try `arena run --lineup haiku-solo`")
+        hint = f" from run {since} on" if since else " yet; try `arena run --lineup haiku-solo`"
+        print(f"no runs{hint}")
         return 0
+    if since:
+        print(f"runs {since} and later\n")
     print(format_scoreboard(rows))
     return 0
 
@@ -106,13 +131,30 @@ def main() -> None:
     p_run = sub.add_parser("run", help="run problems with a lineup")
     p_run.add_argument("--lineup", required=True, help="lineup name from config/lineups.yaml")
     p_run.add_argument("--problem", help='one problem, e.g. "001" (default: all)')
+    p_run.add_argument(
+        "--repeat", type=positive_int, default=1, help="run the problems this many times (default: 1)"
+    )
 
-    sub.add_parser("scoreboard", help="compare lineups across all runs")
+    p_score = sub.add_parser("scoreboard", help="compare lineups across all runs")
+    p_score.add_argument(
+        "--since", type=positive_int, metavar="RUN_ID", help="only count this run and later ones"
+    )
 
     args = parser.parse_args()
     if args.command == "smoke":
         sys.exit(asyncio.run(smoke(args.models or SMOKE_MODELS)))
     elif args.command == "run":
-        sys.exit(asyncio.run(run(args.lineup, args.problem)))
+        try:
+            sys.exit(asyncio.run(run(args.lineup, args.problem, args.repeat)))
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            print("\ninterrupted; the unfinished problem is not scored", file=sys.stderr)
+            sys.exit(130)
     elif args.command == "scoreboard":
-        sys.exit(show_scoreboard())
+        sys.exit(show_scoreboard(args.since))
+
+
+def positive_int(value: str) -> int:
+    n = int(value)
+    if n < 1:
+        raise argparse.ArgumentTypeError(f"must be at least 1, got {n}")
+    return n

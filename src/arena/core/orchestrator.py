@@ -11,6 +11,7 @@ The orchestrator calls the code bounty plugin directly because it is the only
 plugin. Pull out a plugin interface when a second one arrives.
 """
 
+import asyncio
 import time
 from typing import NamedTuple
 
@@ -151,6 +152,11 @@ async def run_lineup(
             except GraderError as e:
                 # The sandbox broke, so nothing after this can be graded either.
                 await board.fail(task.id, f"grader error: {e}")
+                raise
+            except asyncio.CancelledError:
+                # Ctrl-C or SIGTERM. The half-solved problem gets no result row,
+                # and its task shouldn't be left "running" forever.
+                await board.fail(task.id, "interrupted")
                 raise
             outcomes.append(outcome)
 

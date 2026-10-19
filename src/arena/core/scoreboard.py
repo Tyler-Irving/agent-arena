@@ -2,7 +2,8 @@
 
 Every problem result in every run counts as one trial, so running a lineup
 again adds data rather than replacing it. Token and time figures are
-per-problem averages.
+per-problem averages. The per-run range shows how much a lineup's pass rate
+moves between runs, which is the noise any comparison has to beat.
 """
 
 from pydantic import BaseModel
@@ -33,8 +34,16 @@ FROM results
 JOIN runs ON runs.id = results.run_id
 LEFT JOIN call_totals
        ON call_totals.run_id = results.run_id AND call_totals.problem_id = results.problem_id
-WHERE runs.plugin = ?
+WHERE runs.plugin = ? AND runs.id >= ?
 GROUP BY runs.lineup
+"""
+
+RUN_PASS_RATES = """
+SELECT runs.lineup, AVG(results.passed) AS pass_rate
+FROM results
+JOIN runs ON runs.id = results.run_id
+WHERE runs.plugin = ? AND runs.id >= ?
+GROUP BY runs.id
 """
 
 
@@ -49,6 +58,7 @@ class ScoreRow(BaseModel):
     avg_reasoning_tokens: float
     total_cost_usd: float | None  # None if any trial used a model with no known price
     avg_wall_time_ms: float
+    run_pass_rates: list[float]  # one per run, for the run-to-run range
 
     @property
     def pass_rate(self) -> float:
@@ -59,10 +69,18 @@ class ScoreRow(BaseModel):
         return None if self.total_cost_usd is None else self.total_cost_usd / self.trials
 
 
-def scoreboard(log: RunLog, plugin: str = "code_bounty") -> list[ScoreRow]:
-    """One row per lineup, best pass rate first, then cheaper, then faster."""
+def scoreboard(log: RunLog, plugin: str = "code_bounty", since: int | None = None) -> list[ScoreRow]:
+    """One row per lineup, best pass rate first, then cheaper, then faster.
+
+    `since` limits the board to that run id and later, e.g. to leave out runs
+    made before a change to the problems or the loop.
+    """
+    params = (plugin, since or 0)
+    run_rates: dict[str, list[float]] = {}
+    for r in log.db.execute(RUN_PASS_RATES, params):
+        run_rates.setdefault(r["lineup"], []).append(r["pass_rate"])
     rows = []
-    for r in log.db.execute(QUERY, (plugin,)):
+    for r in log.db.execute(QUERY, params):
         cost_known = r["priced_trials"] == r["trials"]
         rows.append(
             ScoreRow(
@@ -76,6 +94,7 @@ def scoreboard(log: RunLog, plugin: str = "code_bounty") -> list[ScoreRow]:
                 avg_reasoning_tokens=r["avg_reasoning_tokens"] or 0,
                 total_cost_usd=(r["total_cost_usd"] or 0.0) if cost_known else None,
                 avg_wall_time_ms=r["avg_wall_time_ms"],
+                run_pass_rates=run_rates[r["lineup"]],
             )
         )
     return sorted(
@@ -90,6 +109,7 @@ def format_scoreboard(rows: list[ScoreRow]) -> str:
         "runs",
         "passed",
         "pass",
+        "per run",
         "attempts",
         "in tok",
         "out tok",
@@ -104,6 +124,7 @@ def format_scoreboard(rows: list[ScoreRow]) -> str:
             str(r.runs),
             f"{r.passed}/{r.trials}",
             f"{r.pass_rate:.0%}",
+            _range(r.run_pass_rates),
             f"{r.avg_attempts:.2f}",
             f"{r.avg_input_tokens:,.0f}",
             f"{r.avg_output_tokens:,.0f}",
@@ -128,9 +149,15 @@ def format_scoreboard(rows: list[ScoreRow]) -> str:
             "  ".join("-" * w for w in widths),
             *(line(row) for row in table),
             "",
-            "attempts, tokens, cost and time are per-problem averages; total is all runs; ? = unpriced model",
+            "per run = lowest-highest pass rate of a single run; attempts, tokens, cost and time are",
+            "per-problem averages; total is all runs; ? = unpriced model",
         ]
     )
+
+
+def _range(rates: list[float]) -> str:
+    lo, hi = min(rates), max(rates)
+    return f"{lo:.0%}" if lo == hi else f"{lo:.0%}-{hi:.0%}"
 
 
 def _cost(cost: float | None) -> str:

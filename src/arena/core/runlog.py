@@ -17,7 +17,9 @@ CREATE TABLE IF NOT EXISTS runs (
     lineup TEXT NOT NULL,
     plugin TEXT NOT NULL,
     started_at TEXT NOT NULL,
-    finished_at TEXT
+    finished_at TEXT,
+    problem TEXT,  -- the --problem selector, NULL when the run covered every problem
+    interrupted INTEGER  -- 1 if stopped by Ctrl-C/SIGTERM before finishing
 );
 
 CREATE TABLE IF NOT EXISTS calls (
@@ -70,6 +72,14 @@ CREATE TABLE IF NOT EXISTS attempts (
 """
 
 
+# Columns added after the first release, as (table, column, type).
+ADDED_COLUMNS = [
+    ("calls", "truncated", "INTEGER"),
+    ("runs", "problem", "TEXT"),
+    ("runs", "interrupted", "INTEGER"),
+]
+
+
 def utc_now() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -84,22 +94,26 @@ class RunLog:
         self.db.executescript(SCHEMA)
         # Columns added after the first release; CREATE TABLE IF NOT EXISTS skips
         # existing tables, so add them to older databases here.
-        call_columns = {row["name"] for row in self.db.execute("PRAGMA table_info(calls)")}
-        if "truncated" not in call_columns:
-            self.db.execute("ALTER TABLE calls ADD COLUMN truncated INTEGER")
-            self.db.commit()
+        for table, column, kind in ADDED_COLUMNS:
+            columns = {row["name"] for row in self.db.execute(f"PRAGMA table_info({table})")}
+            if column not in columns:
+                self.db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
+        self.db.commit()
 
-    def start_run(self, lineup: str, plugin: str) -> int:
+    def start_run(self, lineup: str, plugin: str, problem: str | None = None) -> int:
         cur = self.db.execute(
-            "INSERT INTO runs (lineup, plugin, started_at) VALUES (?, ?, ?)",
-            (lineup, plugin, utc_now()),
+            "INSERT INTO runs (lineup, plugin, started_at, problem) VALUES (?, ?, ?, ?)",
+            (lineup, plugin, utc_now(), problem),
         )
         self.db.commit()
         assert cur.lastrowid is not None
         return cur.lastrowid
 
-    def finish_run(self, run_id: int) -> None:
-        self.db.execute("UPDATE runs SET finished_at = ? WHERE id = ?", (utc_now(), run_id))
+    def finish_run(self, run_id: int, interrupted: bool = False) -> None:
+        self.db.execute(
+            "UPDATE runs SET finished_at = ?, interrupted = ? WHERE id = ?",
+            (utc_now(), int(interrupted), run_id),
+        )
         self.db.commit()
 
     def log_call(

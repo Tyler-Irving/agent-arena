@@ -3,7 +3,9 @@
 Every problem result in every run counts as one trial, so running a lineup
 again adds data rather than replacing it. Token and time figures are
 per-problem averages. The per-run range shows how much a lineup's pass rate
-moves between runs, which is the noise any comparison has to beat.
+moves between runs, which is the noise any comparison has to beat. It only
+uses runs that covered every problem and weren't interrupted, so runs of
+different problem sets aren't compared.
 """
 
 from pydantic import BaseModel
@@ -38,12 +40,18 @@ WHERE runs.plugin = ? AND runs.id >= ?
 GROUP BY runs.lineup
 """
 
-RUN_PASS_RATES = """
-SELECT runs.lineup, AVG(results.passed) AS pass_rate
-FROM results
-JOIN runs ON runs.id = results.run_id
-WHERE runs.plugin = ? AND runs.id >= ?
-GROUP BY runs.id
+RUN_RANGE = """
+WITH full_runs AS (
+    SELECT runs.lineup, AVG(results.passed) AS pass_rate
+    FROM results
+    JOIN runs ON runs.id = results.run_id
+    WHERE runs.plugin = ? AND runs.id >= ?
+      AND runs.problem IS NULL AND runs.finished_at IS NOT NULL AND NOT COALESCE(runs.interrupted, 0)
+    GROUP BY runs.id
+)
+SELECT lineup, MIN(pass_rate) AS low, MAX(pass_rate) AS high
+FROM full_runs
+GROUP BY lineup
 """
 
 
@@ -58,7 +66,9 @@ class ScoreRow(BaseModel):
     avg_reasoning_tokens: float
     total_cost_usd: float | None  # None if any trial used a model with no known price
     avg_wall_time_ms: float
-    run_pass_rates: list[float]  # one per run, for the run-to-run range
+    # lowest and highest single-run pass rate over full runs; None if there are none
+    run_low: float | None
+    run_high: float | None
 
     @property
     def pass_rate(self) -> float:
@@ -76,9 +86,7 @@ def scoreboard(log: RunLog, plugin: str = "code_bounty", since: int | None = Non
     made before a change to the problems or the loop.
     """
     params = (plugin, since or 0)
-    run_rates: dict[str, list[float]] = {}
-    for r in log.db.execute(RUN_PASS_RATES, params):
-        run_rates.setdefault(r["lineup"], []).append(r["pass_rate"])
+    ranges = {r["lineup"]: (r["low"], r["high"]) for r in log.db.execute(RUN_RANGE, params)}
     rows = []
     for r in log.db.execute(QUERY, params):
         cost_known = r["priced_trials"] == r["trials"]
@@ -94,7 +102,8 @@ def scoreboard(log: RunLog, plugin: str = "code_bounty", since: int | None = Non
                 avg_reasoning_tokens=r["avg_reasoning_tokens"] or 0,
                 total_cost_usd=(r["total_cost_usd"] or 0.0) if cost_known else None,
                 avg_wall_time_ms=r["avg_wall_time_ms"],
-                run_pass_rates=run_rates[r["lineup"]],
+                run_low=ranges.get(r["lineup"], (None, None))[0],
+                run_high=ranges.get(r["lineup"], (None, None))[1],
             )
         )
     return sorted(
@@ -124,7 +133,7 @@ def format_scoreboard(rows: list[ScoreRow]) -> str:
             str(r.runs),
             f"{r.passed}/{r.trials}",
             f"{r.pass_rate:.0%}",
-            _range(r.run_pass_rates),
+            _range(r.run_low, r.run_high),
             f"{r.avg_attempts:.2f}",
             f"{r.avg_input_tokens:,.0f}",
             f"{r.avg_output_tokens:,.0f}",
@@ -149,15 +158,16 @@ def format_scoreboard(rows: list[ScoreRow]) -> str:
             "  ".join("-" * w for w in widths),
             *(line(row) for row in table),
             "",
-            "per run = lowest-highest pass rate of a single run; attempts, tokens, cost and time are",
-            "per-problem averages; total is all runs; ? = unpriced model",
+            "per run = lowest-highest pass rate of a single full run (- if none); attempts, tokens,",
+            "cost and time are per-problem averages; total is all runs; ? = unpriced model",
         ]
     )
 
 
-def _range(rates: list[float]) -> str:
-    lo, hi = min(rates), max(rates)
-    return f"{lo:.0%}" if lo == hi else f"{lo:.0%}-{hi:.0%}"
+def _range(low: float | None, high: float | None) -> str:
+    if low is None or high is None:
+        return "-"
+    return f"{low:.0%}" if low == high else f"{low:.0%}-{high:.0%}"
 
 
 def _cost(cost: float | None) -> str:

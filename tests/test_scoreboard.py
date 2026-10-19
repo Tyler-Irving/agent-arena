@@ -47,10 +47,12 @@ def log(tmp_path: Path) -> RunLog:
     run = log.start_run("local", "code_bounty")
     _trial(log, run, "001", passed=True, attempts=1, cost=0.0)
     _trial(log, run, "002", passed=True, attempts=1, cost=0.0)
+    log.finish_run(run)
     # unpriced lineup
     run = log.start_run("unpriced", "code_bounty")
     _trial(log, run, "001", passed=True, attempts=1, cost=None)
     _trial(log, run, "002", passed=True, attempts=1, cost=0.02)
+    log.finish_run(run)
     # smoke runs are not part of the scoreboard
     log.start_run("smoke", "smoke")
     log.db.commit()
@@ -96,7 +98,7 @@ def test_format(log: RunLog) -> None:
 
 def test_per_run_range(log: RunLog) -> None:
     rows = {r.lineup: r for r in scoreboard(log)}
-    assert sorted(rows["cheap"].run_pass_rates) == [0.5, 1.0]
+    assert (rows["cheap"].run_low, rows["cheap"].run_high) == (0.5, 1.0)
     text = format_scoreboard(scoreboard(log))
     cheap = next(line for line in text.splitlines() if line.startswith("cheap"))
     local = next(line for line in text.splitlines() if line.startswith("local"))
@@ -108,6 +110,27 @@ def test_since_leaves_out_earlier_runs(log: RunLog) -> None:
     # runs 1-2 are cheap, 3 is local, 4 is unpriced
     rows = {r.lineup: r for r in scoreboard(log, since=2)}
     assert set(rows) == {"cheap", "local", "unpriced"}
-    assert (rows["cheap"].runs, rows["cheap"].passed, rows["cheap"].run_pass_rates) == (1, 2, [1.0])
+    cheap = rows["cheap"]
+    assert (cheap.runs, cheap.passed, cheap.run_low, cheap.run_high) == (1, 2, 1.0, 1.0)
     assert [r.lineup for r in scoreboard(log, since=4)] == ["unpriced"]
     assert scoreboard(log, since=99) == []
+
+
+def test_range_leaves_out_partial_runs(log: RunLog) -> None:
+    # a single-problem run, an interrupted run and one still going: each still
+    # counts as trials, but none of them is a full run to compare
+    single = log.start_run("local", "code_bounty", problem="002")
+    _trial(log, single, "002", passed=False, attempts=3, cost=0.0)
+    log.finish_run(single)
+    stopped = log.start_run("local", "code_bounty")
+    _trial(log, stopped, "001", passed=False, attempts=3, cost=0.0)
+    log.finish_run(stopped, interrupted=True)
+    going = log.start_run("local", "code_bounty")
+    _trial(log, going, "001", passed=False, attempts=3, cost=0.0)
+
+    local = {r.lineup: r for r in scoreboard(log)}["local"]
+    assert (local.runs, local.trials, local.passed) == (4, 5, 2)
+    assert (local.run_low, local.run_high) == (1.0, 1.0)
+    # a lineup with no full run shows no range
+    assert {r.lineup: r for r in scoreboard(log, since=single)}["local"].run_low is None
+    assert "  -  " in format_scoreboard(scoreboard(log, since=single))

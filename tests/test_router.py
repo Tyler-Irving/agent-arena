@@ -1,8 +1,10 @@
+import asyncio
 import sqlite3
 
 import pytest
 
-from arena.core.runlog import RunLog
+from arena.core.runlog import RunLog, set_runlog
+from arena.models import router
 from arena.models.pricing import cost_usd
 from arena.models.router import anthropic_thinking, estimate_reasoning_tokens, split_think_tags
 
@@ -67,13 +69,35 @@ def test_runlog_adds_columns_to_older_databases(tmp_path) -> None:
     db = tmp_path / "arena.db"
     old = sqlite3.connect(db)
     old.execute("CREATE TABLE calls (id INTEGER PRIMARY KEY, model TEXT NOT NULL, created_at TEXT NOT NULL)")
+    old.execute("CREATE TABLE runs (id INTEGER PRIMARY KEY, lineup TEXT, plugin TEXT, started_at TEXT)")
     old.commit()
     old.close()
 
     log = RunLog(db)
     columns = {row["name"] for row in log.db.execute("PRAGMA table_info(calls)")}
     assert "truncated" in columns
+    columns = {row["name"] for row in log.db.execute("PRAGMA table_info(runs)")}
+    assert {"problem", "interrupted"} <= columns
     RunLog(db)  # opening again is a no-op
+
+
+def test_cancelled_call_is_logged(monkeypatch, tmp_path) -> None:
+    async def hang(*args, **kwargs):
+        await asyncio.sleep(60)
+
+    async def scenario() -> None:
+        call = asyncio.create_task(router.complete("ollama/x", "sys", [], run_id=1, role="coder"))
+        await asyncio.sleep(0.01)
+        call.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await call
+
+    log = RunLog(tmp_path / "arena.db")
+    monkeypatch.setattr(router, "_complete_ollama", hang)
+    set_runlog(log)
+    asyncio.run(scenario())
+    row = log.db.execute("SELECT role, error FROM calls").fetchone()
+    assert tuple(row) == ("coder", "interrupted")
 
 
 SUMMARIZED = {"type": "adaptive", "display": "summarized"}

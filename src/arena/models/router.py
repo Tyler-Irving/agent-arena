@@ -5,6 +5,7 @@ Model strings are prefixed by provider: "anthropic/claude-sonnet-5-5",
 failed ones.
 """
 
+import asyncio
 import os
 import re
 import time
@@ -132,9 +133,12 @@ async def complete(
             raw = await _complete_ollama(name, system, messages, think, max_tokens)
         else:
             raise ValueError(f"unknown provider in model string: {model!r}")
-    except Exception as e:
+    except (Exception, asyncio.CancelledError) as e:
+        # CancelledError is a run stopped by Ctrl-C/SIGTERM; log it so the
+        # transcript shows the call that was in flight.
         latency_ms = int((time.perf_counter() - start) * 1000)
-        log_call(latency_ms=latency_ms, error=f"{type(e).__name__}: {e}")
+        error = "interrupted" if isinstance(e, asyncio.CancelledError) else f"{type(e).__name__}: {e}"
+        log_call(latency_ms=latency_ms, error=error)
         raise
     latency_ms = int((time.perf_counter() - start) * 1000)
 

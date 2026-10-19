@@ -109,7 +109,7 @@ class Session:
             timed_out=result.timed_out,
             output=result.stdout + result.stderr,
         )
-        print(f"   attempt {attempt}: {describe(result)} ({model_note(reply)})")
+        print(f"   attempt {attempt}: {roles.attempt_outcome(result)} ({model_note(reply)})")
         return Graded(code, result)
 
     def outcome(
@@ -220,9 +220,10 @@ async def solve_solo(problem: Problem, role: RoleConfig, run_id: int, log: RunLo
 async def solve_team(problem: Problem, team: dict[str, RoleConfig], run_id: int, log: RunLog) -> Outcome:
     """planner -> coder -> grader, and on failure reviewer -> orchestrator decides.
 
-    Every call is a fresh single-message conversation built from the current
-    plan and the latest graded attempt only, so local models' context stays
-    small. The reviewer and orchestrator are skipped after the last attempt,
+    Every call is a fresh single-message conversation. The coder and reviewer
+    see the current plan and the latest graded attempt only, so local models'
+    context stays small; the orchestrator also gets a one-line summary of each
+    earlier attempt. The reviewer and orchestrator are skipped after the last attempt,
     since nothing could act on what they say.
     """
     session = Session(problem, run_id, log)
@@ -242,6 +243,8 @@ async def solve_team(problem: Problem, team: dict[str, RoleConfig], run_id: int,
         last_code: str | None = None
         last_feedback: str | None = None
         no_code_note: str | None = None
+        plan_number = 1
+        history: list[roles.PastAttempt] = []  # what the orchestrator sees of earlier attempts
 
         while attempt < MAX_ATTEMPTS:
             feedback = "\n\n".join(f for f in (no_code_note, last_feedback) if f) or None
@@ -254,6 +257,7 @@ async def solve_team(problem: Problem, team: dict[str, RoleConfig], run_id: int,
             graded = await session.grade(attempt, reply)
             if graded is None:
                 no_code_note = roles.no_code_feedback(reply.truncated)
+                history.append(roles.PastAttempt(attempt, plan_number, roles.attempt_outcome(None), None))
                 continue
             code, result = graded
             if result.passed:
@@ -272,23 +276,31 @@ async def solve_team(problem: Problem, team: dict[str, RoleConfig], run_id: int,
             reply = await ask(
                 "orchestrator",
                 roles.ORCHESTRATOR_SYSTEM,
-                roles.decide_task(prompt, plan, result, review, attempt, attempts_left),
+                roles.decide_task(prompt, plan, plan_number, result, review, attempt, attempts_left, history),
             )
             decision = roles.parse_decision(reply.text)
+            decided = decision is not None
             if decision is None:
                 print(f"   orchestrator: no decision in reply, retrying ({model_note(reply)})")
                 decision = "retry"
             else:
                 print(f"   orchestrator: {decision} ({model_note(reply)})")
+            history.append(
+                roles.PastAttempt(attempt, plan_number, roles.attempt_outcome(result), decision, decided)
+            )
 
             if decision == "give_up":
                 stop_reason = "orchestrator gave up"
                 break
             if decision == "replan":
+                lead_reason = roles.decision_reason(reply.text)
                 reply = await ask(
-                    "planner", roles.PLANNER_SYSTEM, roles.replan_task(prompt, plan, code, result, review)
+                    "planner",
+                    roles.PLANNER_SYSTEM,
+                    roles.replan_task(prompt, plan, code, result, review, lead_reason),
                 )
                 plan = reply.text or "(no plan)"
+                plan_number += 1
                 print(f"   replan ({model_note(reply)})")
                 # New approach: start the coder fresh rather than anchoring it on the old code.
                 last_code, last_feedback = None, None
@@ -308,12 +320,6 @@ async def solve_team(problem: Problem, team: dict[str, RoleConfig], run_id: int,
 def model_note(reply: ModelResponse) -> str:
     note = f"model {reply.latency_ms / 1000:.1f}s, {reply.output_tokens} out tokens"
     return f"{note}, cut off at the token limit" if reply.truncated else note
-
-
-def describe(result: GradeResult) -> str:
-    if result.timed_out:
-        return "timed out"
-    return f"{result.tests_passed}/{result.tests_total} tests"
 
 
 def format_cost(cost: float | None) -> str:

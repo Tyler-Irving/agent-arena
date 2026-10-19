@@ -207,3 +207,93 @@ def test_team_respects_call_limit(monkeypatch, tmp_path) -> None:
     assert not outcome.passed and outcome.calls == 3
     assert outcome.error is None and outcome.stop_reason == "hit the 3-call limit"
     assert _task_reason(tmp_path) == "hit the 3-call limit after 1 attempts"
+
+
+def test_orchestrator_sees_earlier_attempts_and_decisions(monkeypatch, tmp_path) -> None:
+    replies = {
+        "planner": [_reply("use a dict")],
+        "coder": [
+            _reply("```python\nbad\n```"),
+            _reply("```python\nbad\n```"),
+            _reply("```python\ngood\n```"),
+        ],
+        "reviewer": [_reply("fix A"), _reply("fix B")],
+        "orchestrator": [_reply("DECISION: RETRY"), _reply("DECISION: RETRY")],
+    }
+    _, outcome, seen = _run_team(monkeypatch, tmp_path, replies, [False, False, True])
+
+    assert outcome.passed
+    first, second = (prompt for role, prompt in seen if role == "orchestrator")
+    assert "Earlier attempts" not in first
+    assert "Attempt 1 (plan 1) failed. 2 attempt(s) left." in first
+    assert "Earlier attempts:\n- Attempt 1 (plan 1): 5/6 tests passed. You chose RETRY." in second
+    assert "Attempt 2 (plan 1) failed. 1 attempt(s) left." in second
+
+
+def test_no_code_attempt_appears_in_history(monkeypatch, tmp_path) -> None:
+    replies = {
+        "planner": [_reply("plan")],
+        "coder": [_reply("no code"), _reply("```python\nbad\n```"), _reply("```python\ngood\n```")],
+        "reviewer": [_reply("fix it")],
+        "orchestrator": [_reply("DECISION: RETRY")],
+    }
+    _, _, seen = _run_team(monkeypatch, tmp_path, replies, [False, True])
+
+    decide_prompt = next(prompt for role, prompt in seen if role == "orchestrator")
+    assert "- Attempt 1 (plan 1): the reply had no code block." in decide_prompt
+
+
+def test_replan_passes_the_reason_and_counts_plans(monkeypatch, tmp_path) -> None:
+    replies = {
+        "planner": [_reply("brute force"), _reply("use a dict")],
+        "coder": [
+            _reply("```python\nslow\n```"),
+            _reply("```python\nbad\n```"),
+            _reply("```python\ngood\n```"),
+        ],
+        "reviewer": [_reply("too slow"), _reply("off by one")],
+        "orchestrator": [
+            _reply("DECISION: REPLAN\nbrute force cannot pass the big test"),
+            _reply("DECISION: RETRY"),
+        ],
+    }
+    _, outcome, seen = _run_team(monkeypatch, tmp_path, replies, [False, False, True])
+
+    assert outcome.passed
+    replan_prompt = [prompt for role, prompt in seen if role == "planner"][1]
+    assert "brute force cannot pass the big test" in replan_prompt
+    second_decision = [prompt for role, prompt in seen if role == "orchestrator"][1]
+    assert "Current plan (plan 2):\nuse a dict" in second_decision
+    assert "- Attempt 1 (plan 1): 5/6 tests passed. You chose REPLAN." in second_decision
+    assert "Attempt 2 (plan 2) failed." in second_decision
+
+
+def test_assumed_retry_is_not_reported_as_a_choice(monkeypatch, tmp_path) -> None:
+    replies = {
+        "planner": [_reply("plan")],
+        "coder": [
+            _reply("```python\nbad\n```"),
+            _reply("```python\nbad\n```"),
+            _reply("```python\ngood\n```"),
+        ],
+        "reviewer": [_reply("fix A"), _reply("fix B")],
+        "orchestrator": [_reply("hmm, not sure"), _reply("DECISION: RETRY")],
+    }
+    _, _, seen = _run_team(monkeypatch, tmp_path, replies, [False, False, True])
+
+    second = [prompt for role, prompt in seen if role == "orchestrator"][1]
+    assert "Your reply had no clear decision, so the coder retried." in second
+    assert "You chose RETRY" not in second
+
+
+@pytest.mark.parametrize(
+    ("reply", "reason"),
+    [
+        ("DECISION: REPLAN\nbrute force is too slow", "brute force is too slow"),
+        ("DECISION: REPLAN – greedy is not optimal.", "greedy is not optimal"),
+        ("**DECISION:** REPLAN", roles.NO_REASON),
+        ("\n", roles.NO_REASON),
+    ],
+)
+def test_decision_reason(reply: str, reason: str) -> None:
+    assert roles.decision_reason(reply) == reason

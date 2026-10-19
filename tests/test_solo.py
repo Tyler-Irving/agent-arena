@@ -48,6 +48,13 @@ def test_config_lineups_load() -> None:
     lineups = load_lineups()
     assert lineups["opus-solo"].roles["solo"].model == "anthropic/claude-opus-5-5"
     assert lineups["sonnet-orch-qwen14b"].mode == "team"
+    assert lineups["sonnet-orch-qwen14b"].max_attempts == 3
+    assert lineups["sonnet-orch-qwen14b-5att"].max_attempts == 5
+
+
+def test_max_attempts_must_be_positive() -> None:
+    with pytest.raises(ValidationError, match="max_attempts"):
+        Lineup.model_validate({"name": "x", "mode": "solo", "roles": {"solo": "ollama/x"}, "max_attempts": 0})
 
 
 # --- task board ------------------------------------------------------------

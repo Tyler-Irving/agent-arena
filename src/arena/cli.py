@@ -69,7 +69,10 @@ async def run(lineup_name: str, problem: str | None, repeat: int) -> int:
 
     roles = ", ".join(f"{role}={cfg.model}" for role, cfg in lineup.roles.items())
     times = f" x {repeat} runs" if repeat > 1 else ""
-    print(f"lineup {lineup.name} ({lineup.mode}: {roles}), {len(problems)} problem(s){times}\n")
+    print(
+        f"lineup {lineup.name} ({lineup.mode}: {roles}; max {lineup.max_attempts} attempts), "
+        f"{len(problems)} problem(s){times}\n"
+    )
 
     board = SqliteTaskBoard()
     summaries: list[tuple[int, list[Outcome]]] = []

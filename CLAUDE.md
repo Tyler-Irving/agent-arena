@@ -115,7 +115,7 @@ all-local-gptoss:
 6. Orchestrator decides: retry, replan, or give up
 7. Hard limits: max 3 attempts per problem (a lineup can set `max_attempts`), max 20 model calls per problem
 
-Solo mode skips planner/reviewer: one model gets the prompt, writes code, sees test failures, retries up to 3 times.
+Solo mode skips planner/reviewer: one model gets the prompt, writes code, sees test failures, and retries, up to 3 attempts (or the lineup's `max_attempts`).
 
 Only one Ollama model should be loaded at a time (16GB VRAM). Run problems sequentially within a lineup.
 

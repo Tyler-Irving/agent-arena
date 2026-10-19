@@ -72,8 +72,9 @@
 - /code-review found 10 issues, all fixed on the branch (listed in the PR description)
 - Attempt limit is now a lineup field (`max_attempts`, default 3; branch feat/lineup-max-attempts,
   stacked on feat/repeat-runs). A different limit is a different lineup name, so it gets its own
-  scoreboard row. Added sonnet-orch-qwen14b-5att. Team worst case is 4n-2 calls plus one planner
-  call per replan, so n=5 stays under MAX_CALLS=20.
+  scoreboard row, and runs.max_attempts records it. Added sonnet-orch-qwen14b-5att (YAML merge
+  key, so its roles match). Team worst case is 4n-2 calls (3n-1 without replans), so team
+  max_attempts <= 5 and solo <= 20; lineup loading rejects anything that can't fit MAX_CALLS=20.
 - User approved a $3 budget for the Sonnet 3-vs-5-attempt experiment (2026-10-19)
 
 ## Open decisions / known issues

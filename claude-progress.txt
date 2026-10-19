@@ -8,7 +8,7 @@
 - Docker Desktop must be running. In WSL, /usr/bin/docker is a stub until it starts.
   Start from WSL: cmd.exe /c start "" "C:\Program Files\Docker\Docker\Docker Desktop.exe"
 - Verify the state before changing anything:
-    uv run ruff check src tests && uv run pyright src tests && uv run pytest -q   # 101 passing
+    uv run ruff check src tests && uv run pyright src tests && uv run pytest -q   # 108 passing
     uv run arena scoreboard
 
 ## What exists
@@ -76,6 +76,18 @@
   key, so its roles match). Team worst case is 4n-2 calls (3n-1 without replans), so team
   max_attempts <= 5 and solo <= 20; lineup loading rejects anything that can't fit MAX_CALLS=20.
 - User approved a $3 budget for the Sonnet 3-vs-5-attempt experiment (2026-10-19)
+
+## 3 vs 5 attempts, sonnet-orch-qwen14b (runs 17, 19-25, 2026-10-19; spent $2.42)
+- Runs alternated 5att/3att. 5 attempts: 8, 8, 8, 7 = 31/40 (78%), $0.39/run.
+  3 attempts (17, 20, 22, 24): 7, 7, 6, 7 = 27/40 (68%), $0.29/run. Ranges touch at 70%
+- The whole gain is on 007/009/010: 3 attempts passed them 0/12 times, 5 attempts 4/12, all
+  at attempt 4 or 5 (one-sided Fisher p ~= 0.05). 001-006 and 008 are the same either way
+- Every late pass came right after a REPLAN, 4 of 5 on a fresh plan's first attempt (often the
+  second replan). The attempt right after a REPLAN passed 8/34 (24%); after a RETRY 7/60 (12%).
+  So the extra attempts mostly buy a second replan, not more retries of the same plan
+- REPLAN share is the same at both limits (~36% of decisions); GIVE_UP never chosen
+- Ideas, not done: replan sooner (after one failed retry), or make the coder start fresh on
+  RETRY too; 009 (cron) stays hard for qwen14b whatever the plan
 
 ## Open decisions / known issues
 - Local-model wall time includes the cold load on a run's first problem (gpt-oss ~25s).

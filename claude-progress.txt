@@ -21,7 +21,7 @@
 - core/lineup.py + config/lineups.yaml: a role is a model string or {model, think}.
   Team lineups validate orchestrator/planner/coder/reviewer.
 - core/taskboard.py: async TaskBoard Protocol plus a SQLite implementation (atomic claim).
-- core/orchestrator.py: run_lineup() -> solve_solo() | solve_team(). MAX_ATTEMPTS=3, MAX_CALLS=20,
+- core/orchestrator.py: run_lineup() -> solve_solo() | solve_team(). max_attempts per lineup (default 3), MAX_CALLS=20,
   enforced by Session (counts calls + cost, grades and logs attempts). Team loop: planner ->
   coder -> grader; on failure reviewer -> orchestrator (DECISION: RETRY|REPLAN|GIVE_UP,
   unparseable = retry). Every team call is a fresh 1-message conversation (current plan +
@@ -70,9 +70,11 @@
 ## Repeat runs + scoreboard filter (branch feat/repeat-runs, 2026-10-19)
 - Built 1-3 of the plan: `run --repeat N`, `scoreboard --since`, clean Ctrl-C/SIGTERM shutdown
 - /code-review found 10 issues, all fixed on the branch (listed in the PR description)
-- Next (needs a run budget from the user): several runs per team lineup at MAX_ATTEMPTS=3 vs 4-5.
-  MAX_ATTEMPTS is a module constant and the scoreboard groups by lineup name, so the experiment
-  needs either a flag recorded on the run or separate lineup names per attempt limit
+- Attempt limit is now a lineup field (`max_attempts`, default 3; branch feat/lineup-max-attempts,
+  stacked on feat/repeat-runs). A different limit is a different lineup name, so it gets its own
+  scoreboard row. Added sonnet-orch-qwen14b-5att. Team worst case is 4n-2 calls plus one planner
+  call per replan, so n=5 stays under MAX_CALLS=20.
+- User approved a $3 budget for the Sonnet 3-vs-5-attempt experiment (2026-10-19)
 
 ## Open decisions / known issues
 - Local-model wall time includes the cold load on a run's first problem (gpt-oss ~25s).

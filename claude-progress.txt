@@ -46,8 +46,18 @@
 - haiku-solo 10/10, all first try, $0.008
 - gptoss-solo 9/10 (failed 009 cron), all-local-gptoss team 10/10 (007 and 009 on the 2nd try)
 - qwen14b-solo 4/10; sonnet-orch-qwen14b team 7/10 ($0.19): Sonnet planning lifts qwen14b by 3
-- Orchestrators only ever chose RETRY (8 times for Sonnet, 2 for gpt-oss); REPLAN and GIVE_UP
-  have still never fired on a real run
+- Orchestrators only ever chose RETRY (8 times for Sonnet, 2 for gpt-oss). Not a parsing bug:
+  probes with deliberately wrong plans got REPLAN. The decide prompt couldn't show repeated
+  failure, and REPLAN only covered wrong plans, not plans the coder can't implement
+
+## Orchestrator history (runs 17-18, same 10 problems)
+- The decide prompt now lists earlier attempts and the orchestrator's own decisions; REPLAN
+  also covers "coder failed twice with this plan, a simpler one would be easier"
+- sonnet-orch-qwen14b: 7/10 again ($0.33 vs $0.19), but 4 REPLANs (005, 007, 009, 010), all at
+  the second decision. Only 005 was rescued: a replan leaves one attempt for the new plan
+- all-local-gptoss: 10/10 again, 2 RETRYs, nothing needed a replan
+- 004 and 010 flipped between runs with no change on their path: run-to-run noise is as large as
+  the effects being measured. Next: several runs per lineup, and try MAX_ATTEMPTS=4-5 for teams
 - Haiku and gpt-oss find the set easy; the separation is among the weaker local models.
   One run per lineup is noisy (qwen14b passed 003 in run 13 but failed it in run 11)
 - Runs 10 (haiku-solo) and 11 (qwen14b-solo, interrupted, never finished) used the pre-fix
@@ -59,6 +69,9 @@
 - Step 6: make the remaining 7 problems mostly medium or harder, with stated-but-easy-to-miss edge cases.
 - Ollama reasoning_tokens is a character-share estimate; Anthropic reports thinking_tokens exactly.
 - think=false can't fully disable gpt-oss thinking.
+- Stopping a background `arena run` (TaskStop/SIGTERM on the parent shell) can leave the Python
+  process running, and a killed run never sets finished_at or clears its "running" task. Kill
+  with `pkill -f "[a]rena run --lineup"`; a SIGTERM handler would make runs end cleanly.
 - Anthropic think=false: Haiku 5.5 -> disabled, Sonnet 5.5 -> between_tools, Opus 5.5 can't
   (lineup load fails). With thinking on, the router asks for display "summarized", so
   calls.reasoning holds a readable summary for Anthropic models (the raw chain of thought is

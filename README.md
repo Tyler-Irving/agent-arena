@@ -54,8 +54,9 @@ uv run arena scoreboard                            # compare lineups across all 
 uv run arena scoreboard --since 17                 # only run 17 and later
 ```
 
-Ctrl-C or SIGTERM stops a run cleanly: the run is closed, and the unfinished problem
-is marked interrupted and left unscored.
+Ctrl-C or SIGTERM stops a run cleanly: the run is closed and marked interrupted, and the
+unfinished problem is left unscored. A second signal is ignored so it can't cut short the
+sandbox cleanup. The scoreboard's "per run" range only compares full, uninterrupted runs.
 
 For local models, pull them first (`ollama pull qwen2.5-coder:14b`) and keep Ollama
 on `http://localhost:11434`.

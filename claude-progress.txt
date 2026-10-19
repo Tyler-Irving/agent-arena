@@ -8,7 +8,7 @@
 - Docker Desktop must be running. In WSL, /usr/bin/docker is a stub until it starts.
   Start from WSL: cmd.exe /c start "" "C:\Program Files\Docker\Docker\Docker Desktop.exe"
 - Verify the state before changing anything:
-    uv run ruff check src tests && uv run pyright src tests && uv run pytest -q   # 97 passing
+    uv run ruff check src tests && uv run pyright src tests && uv run pytest -q   # 101 passing
     uv run arena scoreboard
 
 ## What exists
@@ -33,7 +33,8 @@
   roles.py (solo + team prompts, parse_decision), problems.py (loading + extract_code).
 - problems 001-010, each with a reference.py that tests/test_solo.py grades.
 - CLI: arena smoke | run --lineup X [--problem 001] [--repeat N] | scoreboard [--since RUN_ID]
-  The scoreboard's "per run" column is the lowest-highest single-run pass rate per lineup.
+  The scoreboard's "per run" column is the lowest-highest single-run pass rate per lineup, over
+  full runs only (runs.problem NULL, not interrupted, finished). runs.problem records --problem.
 
 ## Runs in data/arena.db (gitignored)
 - 1-3 smoke; 4 haiku-solo 3/3 ($0.0006); 5 qwen14b-solo 3/3; 6 gptoss-solo 3/3.
@@ -68,6 +69,7 @@
 
 ## Repeat runs + scoreboard filter (branch feat/repeat-runs, 2026-10-19)
 - Built 1-3 of the plan: `run --repeat N`, `scoreboard --since`, clean Ctrl-C/SIGTERM shutdown
+- /code-review found 10 issues, all fixed on the branch (listed in the PR description)
 - Next (needs a run budget from the user): several runs per team lineup at MAX_ATTEMPTS=3 vs 4-5.
   MAX_ATTEMPTS is a module constant and the scoreboard groups by lineup name, so the experiment
   needs either a flag recorded on the run or separate lineup names per attempt limit
@@ -77,9 +79,11 @@
   An untimed warm-up call was offered; not decided.
 - Ollama reasoning_tokens is a character-share estimate; Anthropic reports thinking_tokens exactly.
 - think=false can't fully disable gpt-oss thinking.
-- Ctrl-C or SIGTERM (to `uv run` or the Python process) stops a run cleanly: finished_at is set,
-  the in-flight task is failed "interrupted" with no results row, exit code 130. Verified that uv
-  forwards SIGTERM. Killing only a wrapping shell (TaskStop on a background shell) doesn't signal
+- Ctrl-C or SIGTERM (to `uv run` or the Python process) stops `run` and `smoke` cleanly:
+  finished_at is set, runs.interrupted = 1, the in-flight task is failed "interrupted" with no
+  results row, the in-flight model call is logged with error "interrupted", exit 130 (Ctrl-C) or
+  143 (SIGTERM). Later signals are ignored so they can't cancel the grader's container cleanup.
+  Verified that uv forwards SIGTERM. Killing only a wrapping shell (TaskStop on a background shell) doesn't signal
   the run, so stop it with `pkill -TERM -f "[a]rena run --lineup"`.
 - Anthropic think=false: Haiku 5.5 -> disabled, Sonnet 5.5 -> between_tools, Opus 5.5 can't
   (lineup load fails). With thinking on, the router asks for display "summarized", so

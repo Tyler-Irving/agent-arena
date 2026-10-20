@@ -49,8 +49,14 @@ docker build -t arena-grader docker/arena-grader   # the grading sandbox
 uv run arena smoke                                 # one call to each configured model
 uv run arena run --lineup haiku-solo               # run every problem with a lineup
 uv run arena run --lineup all-local-gptoss --problem 002
+uv run arena run --lineup qwen14b-solo --repeat 5  # five runs, to see run-to-run noise
 uv run arena scoreboard                            # compare lineups across all runs
+uv run arena scoreboard --since 17                 # only run 17 and later
 ```
+
+Ctrl-C or SIGTERM stops a run cleanly: the run is closed and marked interrupted, and the
+unfinished problem is left unscored. A second signal is ignored so it can't cut short the
+sandbox cleanup. The scoreboard's "per run" range only compares full, uninterrupted runs.
 
 For local models, pull them first (`ollama pull qwen2.5-coder:14b`) and keep Ollama
 on `http://localhost:11434`.

@@ -2,7 +2,10 @@
 
 Every problem result in every run counts as one trial, so running a lineup
 again adds data rather than replacing it. Token and time figures are
-per-problem averages.
+per-problem averages. The per-run range shows how much a lineup's pass rate
+moves between runs, which is the noise any comparison has to beat. It only
+uses runs that covered every problem and weren't interrupted, so runs of
+different problem sets aren't compared.
 """
 
 from pydantic import BaseModel
@@ -33,8 +36,22 @@ FROM results
 JOIN runs ON runs.id = results.run_id
 LEFT JOIN call_totals
        ON call_totals.run_id = results.run_id AND call_totals.problem_id = results.problem_id
-WHERE runs.plugin = ?
+WHERE runs.plugin = ? AND runs.id >= ?
 GROUP BY runs.lineup
+"""
+
+RUN_RANGE = """
+WITH full_runs AS (
+    SELECT runs.lineup, AVG(results.passed) AS pass_rate
+    FROM results
+    JOIN runs ON runs.id = results.run_id
+    WHERE runs.plugin = ? AND runs.id >= ?
+      AND runs.problem IS NULL AND runs.finished_at IS NOT NULL AND NOT COALESCE(runs.interrupted, 0)
+    GROUP BY runs.id
+)
+SELECT lineup, MIN(pass_rate) AS low, MAX(pass_rate) AS high
+FROM full_runs
+GROUP BY lineup
 """
 
 
@@ -49,6 +66,9 @@ class ScoreRow(BaseModel):
     avg_reasoning_tokens: float
     total_cost_usd: float | None  # None if any trial used a model with no known price
     avg_wall_time_ms: float
+    # lowest and highest single-run pass rate over full runs; None if there are none
+    run_low: float | None
+    run_high: float | None
 
     @property
     def pass_rate(self) -> float:
@@ -59,10 +79,16 @@ class ScoreRow(BaseModel):
         return None if self.total_cost_usd is None else self.total_cost_usd / self.trials
 
 
-def scoreboard(log: RunLog, plugin: str = "code_bounty") -> list[ScoreRow]:
-    """One row per lineup, best pass rate first, then cheaper, then faster."""
+def scoreboard(log: RunLog, plugin: str = "code_bounty", since: int | None = None) -> list[ScoreRow]:
+    """One row per lineup, best pass rate first, then cheaper, then faster.
+
+    `since` limits the board to that run id and later, e.g. to leave out runs
+    made before a change to the problems or the loop.
+    """
+    params = (plugin, since or 0)
+    ranges = {r["lineup"]: (r["low"], r["high"]) for r in log.db.execute(RUN_RANGE, params)}
     rows = []
-    for r in log.db.execute(QUERY, (plugin,)):
+    for r in log.db.execute(QUERY, params):
         cost_known = r["priced_trials"] == r["trials"]
         rows.append(
             ScoreRow(
@@ -76,6 +102,8 @@ def scoreboard(log: RunLog, plugin: str = "code_bounty") -> list[ScoreRow]:
                 avg_reasoning_tokens=r["avg_reasoning_tokens"] or 0,
                 total_cost_usd=(r["total_cost_usd"] or 0.0) if cost_known else None,
                 avg_wall_time_ms=r["avg_wall_time_ms"],
+                run_low=ranges.get(r["lineup"], (None, None))[0],
+                run_high=ranges.get(r["lineup"], (None, None))[1],
             )
         )
     return sorted(
@@ -90,6 +118,7 @@ def format_scoreboard(rows: list[ScoreRow]) -> str:
         "runs",
         "passed",
         "pass",
+        "per run",
         "attempts",
         "in tok",
         "out tok",
@@ -104,6 +133,7 @@ def format_scoreboard(rows: list[ScoreRow]) -> str:
             str(r.runs),
             f"{r.passed}/{r.trials}",
             f"{r.pass_rate:.0%}",
+            _range(r.run_low, r.run_high),
             f"{r.avg_attempts:.2f}",
             f"{r.avg_input_tokens:,.0f}",
             f"{r.avg_output_tokens:,.0f}",
@@ -128,9 +158,16 @@ def format_scoreboard(rows: list[ScoreRow]) -> str:
             "  ".join("-" * w for w in widths),
             *(line(row) for row in table),
             "",
-            "attempts, tokens, cost and time are per-problem averages; total is all runs; ? = unpriced model",
+            "per run = lowest-highest pass rate of a single full run (- if none); attempts, tokens,",
+            "cost and time are per-problem averages; total is all runs; ? = unpriced model",
         ]
     )
+
+
+def _range(low: float | None, high: float | None) -> str:
+    if low is None or high is None:
+        return "-"
+    return f"{low:.0%}" if low == high else f"{low:.0%}-{high:.0%}"
 
 
 def _cost(cost: float | None) -> str:

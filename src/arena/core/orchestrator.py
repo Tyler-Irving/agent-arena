@@ -11,6 +11,7 @@ The orchestrator calls the code bounty plugin directly because it is the only
 plugin. Pull out a plugin interface when a second one arrives.
 """
 
+import asyncio
 import time
 from typing import NamedTuple
 
@@ -18,7 +19,7 @@ from pydantic import BaseModel
 
 from arena.core.lineup import Lineup, RoleConfig
 from arena.core.runlog import RunLog, set_runlog
-from arena.core.taskboard import TaskBoard
+from arena.core.taskboard import Task, TaskBoard
 from arena.models.router import ModelResponse, complete
 from arena.plugins.code_bounty import roles
 from arena.plugins.code_bounty.grader import GraderError, GradeResult, grade
@@ -128,19 +129,25 @@ class Session:
 
 
 async def run_lineup(
-    lineup: Lineup, problems: list[Problem], board: TaskBoard, log: RunLog
+    lineup: Lineup, problems: list[Problem], board: TaskBoard, log: RunLog, selector: str | None = None
 ) -> tuple[int, list[Outcome]]:
-    """Run every problem through the lineup. Returns (run_id, outcomes)."""
+    """Run every problem through the lineup. Returns (run_id, outcomes).
+
+    `selector` is the --problem the problems were picked with, recorded on the run.
+    """
     set_runlog(log)  # the router logs calls to the same database as the run
-    run_id = log.start_run(lineup.name, PLUGIN)
+    run_id = log.start_run(lineup.name, PLUGIN, selector)
     by_id = {p.id: p for p in problems}
     for p in problems:
         await board.put(run_id, p.id)
 
     outcomes: list[Outcome] = []
+    claimed: Task | None = None  # the task that is "running" on the board, if any
+    interrupted = False
     try:
         # Sequential on purpose: only one local model fits in VRAM at a time.
-        while (task := await board.next(run_id)) is not None:
+        while (claimed := await board.next(run_id)) is not None:
+            task = claimed
             problem = by_id[task.problem_id]
             print(f"== {problem.id}")
             try:
@@ -151,6 +158,7 @@ async def run_lineup(
             except GraderError as e:
                 # The sandbox broke, so nothing after this can be graded either.
                 await board.fail(task.id, f"grader error: {e}")
+                claimed = None
                 raise
             outcomes.append(outcome)
 
@@ -169,14 +177,22 @@ async def run_lineup(
             else:
                 reason = outcome.stop_reason or "tests failing"
                 await board.fail(task.id, outcome.error or f"{reason} after {outcome.attempts} attempts")
+            claimed = None
 
             verdict = "PASS" if outcome.passed else "ERROR, not scored" if outcome.error else "FAIL"
             print(
                 f"   {verdict} in {outcome.attempts} attempt(s), {outcome.calls} call(s), "
                 f"{format_cost(outcome.cost_usd)}, {outcome.wall_time_ms / 1000:.1f}s\n"
             )
+    except asyncio.CancelledError:
+        # Ctrl-C or SIGTERM, at any await. The half-solved problem gets no
+        # result row, and its task shouldn't be left "running" forever.
+        interrupted = True
+        if claimed is not None:
+            await board.fail(claimed.id, "interrupted")
+        raise
     finally:
-        log.finish_run(run_id)
+        log.finish_run(run_id, interrupted=interrupted)
     return run_id, outcomes
 
 

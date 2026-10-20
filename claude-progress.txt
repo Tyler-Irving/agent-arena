@@ -1,14 +1,14 @@
-# claude-progress.txt — session state (updated 2026-10-18)
+# claude-progress.txt — session state (updated 2026-10-19)
 
 ## Start here
 - Build order: steps 1-6 DONE and merged to main (tags step-1-router .. step-6-problems).
-- GitHub: https://github.com/Tyler-Irving/agent-arena (private). main has steps 1-5, merged
-  through one PR per step; build steps are tagged step-1-router .. step-5-team.
+- GitHub: https://github.com/Tyler-Irving/agent-arena (private). main has steps 1-6, merged
+  through one PR per step; build steps are tagged step-1-router .. step-6-problems.
 - Run /code-review before any PR.
 - Docker Desktop must be running. In WSL, /usr/bin/docker is a stub until it starts.
   Start from WSL: cmd.exe /c start "" "C:\Program Files\Docker\Docker\Docker Desktop.exe"
 - Verify the state before changing anything:
-    uv run ruff check src tests && uv run pyright src tests && uv run pytest -q   # 82 passing
+    uv run ruff check src tests && uv run pyright src tests && uv run pytest -q   # 90 passing
     uv run arena scoreboard
 
 ## What exists
@@ -31,7 +31,7 @@
 - core/scoreboard.py: every result in every code_bounty run is one trial.
 - plugins/code_bounty: grader.py (Docker sandbox, GraderError for infra failures),
   roles.py (solo + team prompts, parse_decision), problems.py (loading + extract_code).
-- problems 001-003, each with a reference.py that tests/test_solo.py grades.
+- problems 001-010, each with a reference.py that tests/test_solo.py grades.
 - CLI: arena smoke | run --lineup X [--problem 001] | scoreboard
 
 ## Runs in data/arena.db (gitignored)
@@ -66,7 +66,6 @@
 ## Open decisions / known issues
 - Local-model wall time includes the cold load on a run's first problem (gpt-oss ~25s).
   An untimed warm-up call was offered; not decided.
-- Step 6: make the remaining 7 problems mostly medium or harder, with stated-but-easy-to-miss edge cases.
 - Ollama reasoning_tokens is a character-share estimate; Anthropic reports thinking_tokens exactly.
 - think=false can't fully disable gpt-oss thinking.
 - Stopping a background `arena run` (TaskStop/SIGTERM on the parent shell) can leave the Python

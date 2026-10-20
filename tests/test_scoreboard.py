@@ -38,7 +38,7 @@ def log(tmp_path: Path) -> RunLog:
     log = RunLog(tmp_path / "arena.db")
     # cheap lineup, two runs: 3 of 4 trials pass
     for _ in range(2):
-        run = log.start_run("cheap", "code_bounty")
+        run = log.start_run("cheap", "code_bounty", max_attempts=3)
         _trial(log, run, "001", passed=True, attempts=1, cost=0.01)
         _trial(log, run, "002", passed=False, attempts=3, cost=0.03)
         log.finish_run(run)
@@ -90,7 +90,7 @@ def test_order_pass_rate_then_cost(log: RunLog) -> None:
 def test_format(log: RunLog) -> None:
     text = format_scoreboard(scoreboard(log))
     lines = text.splitlines()
-    assert lines[0].split()[:4] == ["lineup", "runs", "passed", "pass"]
+    assert lines[0].split()[:5] == ["lineup", "limit", "runs", "passed", "pass"]
     assert "3/4" in text and "75%" in text and "$0.0200" in text
     unpriced = next(line for line in lines if line.startswith("unpriced"))
     assert unpriced.split()[-3:-1] == ["?", "?"]
@@ -103,7 +103,7 @@ def test_per_run_range(log: RunLog) -> None:
     cheap = next(line for line in text.splitlines() if line.startswith("cheap"))
     local = next(line for line in text.splitlines() if line.startswith("local"))
     assert "50%-100%" in cheap.split()
-    assert local.split()[3:5] == ["100%", "100%"]  # one run: no range
+    assert local.split()[4:6] == ["100%", "100%"]  # one run: no range
 
 
 def test_since_leaves_out_earlier_runs(log: RunLog) -> None:
@@ -134,3 +134,18 @@ def test_range_leaves_out_partial_runs(log: RunLog) -> None:
     # a lineup with no full run shows no range
     assert {r.lineup: r for r in scoreboard(log, since=single)}["local"].run_low is None
     assert "  -  " in format_scoreboard(scoreboard(log, since=single))
+
+
+def test_attempt_limits_get_separate_rows(log: RunLog) -> None:
+    run = log.start_run("cheap", "code_bounty", max_attempts=5)
+    _trial(log, run, "001", passed=True, attempts=1, cost=0.01)
+    log.finish_run(run)
+
+    cheap = {r.max_attempts: r for r in scoreboard(log) if r.lineup == "cheap"}
+    assert set(cheap) == {3, 5}
+    assert (cheap[3].runs, cheap[5].runs) == (2, 1)
+    assert (cheap[5].run_low, cheap[5].run_high) == (1.0, 1.0)
+    lines = format_scoreboard(scoreboard(log)).splitlines()
+    assert sorted(line.split()[1] for line in lines if line.startswith("cheap")) == ["3", "5"]
+    # runs logged before the limit was recorded show "?"
+    assert next(line for line in lines if line.startswith("local")).split()[1] == "?"

@@ -17,7 +17,7 @@ from typing import NamedTuple
 
 from pydantic import BaseModel
 
-from arena.core.lineup import Lineup, RoleConfig
+from arena.core.lineup import MAX_CALLS, Lineup, RoleConfig
 from arena.core.runlog import RunLog, set_runlog
 from arena.core.taskboard import Task, TaskBoard
 from arena.models.router import ModelResponse, complete
@@ -26,8 +26,6 @@ from arena.plugins.code_bounty.grader import GraderError, GradeResult, grade
 from arena.plugins.code_bounty.problems import Problem, extract_code
 
 PLUGIN = "code_bounty"
-MAX_ATTEMPTS = 3
-MAX_CALLS = 20
 
 
 class Outcome(BaseModel):
@@ -40,7 +38,7 @@ class Outcome(BaseModel):
     # A provider error (outage, auth, rate limit). The problem isn't scored,
     # since the failure says nothing about the lineup.
     error: str | None = None
-    # Why a scored problem stopped before MAX_ATTEMPTS, if it did.
+    # Why a scored problem stopped before the lineup's max_attempts, if it did.
     stop_reason: str | None = None
 
 
@@ -136,7 +134,8 @@ async def run_lineup(
     `selector` is the --problem the problems were picked with, recorded on the run.
     """
     set_runlog(log)  # the router logs calls to the same database as the run
-    run_id = log.start_run(lineup.name, PLUGIN, selector)
+    run_id = log.start_run(lineup.name, PLUGIN, selector, lineup.max_attempts)
+    limit = lineup.max_attempts
     by_id = {p.id: p for p in problems}
     for p in problems:
         await board.put(run_id, p.id)
@@ -152,9 +151,9 @@ async def run_lineup(
             print(f"== {problem.id}")
             try:
                 if lineup.mode == "solo":
-                    outcome = await solve_solo(problem, lineup.roles["solo"], run_id, log)
+                    outcome = await solve_solo(problem, lineup.roles["solo"], run_id, log, limit)
                 else:
-                    outcome = await solve_team(problem, lineup.roles, run_id, log)
+                    outcome = await solve_team(problem, lineup.roles, run_id, log, limit)
             except GraderError as e:
                 # The sandbox broke, so nothing after this can be graded either.
                 await board.fail(task.id, f"grader error: {e}")
@@ -196,14 +195,16 @@ async def run_lineup(
     return run_id, outcomes
 
 
-async def solve_solo(problem: Problem, role: RoleConfig, run_id: int, log: RunLog) -> Outcome:
-    """One model writes code, sees test failures, and retries up to MAX_ATTEMPTS."""
+async def solve_solo(
+    problem: Problem, role: RoleConfig, run_id: int, log: RunLog, max_attempts: int
+) -> Outcome:
+    """One model writes code, sees test failures, and retries up to max_attempts."""
     session = Session(problem, run_id, log)
     messages = [{"role": "user", "content": roles.solo_task(problem.prompt)}]
     attempt = 0
     passed, error, stop_reason = False, None, None
 
-    while attempt < MAX_ATTEMPTS:
+    while attempt < max_attempts:
         try:
             reply = await session.call("solo", role, roles.SOLO_SYSTEM, messages)
         except ModelCallFailed as e:
@@ -233,7 +234,13 @@ async def solve_solo(problem: Problem, role: RoleConfig, run_id: int, log: RunLo
     return session.outcome(passed=passed, attempts=attempt, error=error, stop_reason=stop_reason)
 
 
-async def solve_team(problem: Problem, team: dict[str, RoleConfig], run_id: int, log: RunLog) -> Outcome:
+async def solve_team(
+    problem: Problem,
+    team: dict[str, RoleConfig],
+    run_id: int,
+    log: RunLog,
+    max_attempts: int,
+) -> Outcome:
     """planner -> coder -> grader, and on failure reviewer -> orchestrator decides.
 
     Every call is a fresh single-message conversation. The coder and reviewer
@@ -262,7 +269,7 @@ async def solve_team(problem: Problem, team: dict[str, RoleConfig], run_id: int,
         plan_number = 1
         history: list[roles.PastAttempt] = []  # what the orchestrator sees of earlier attempts
 
-        while attempt < MAX_ATTEMPTS:
+        while attempt < max_attempts:
             feedback = "\n\n".join(f for f in (no_code_note, last_feedback) if f) or None
             reply = await ask(
                 "coder", roles.CODER_SYSTEM, roles.coder_task(prompt, plan, last_code, feedback)
@@ -279,7 +286,7 @@ async def solve_team(problem: Problem, team: dict[str, RoleConfig], run_id: int,
             if result.passed:
                 passed = True
                 break
-            if attempt == MAX_ATTEMPTS:
+            if attempt == max_attempts:
                 break
 
             reply = await ask(
@@ -288,7 +295,7 @@ async def solve_team(problem: Problem, team: dict[str, RoleConfig], run_id: int,
             review = reply.text or "(no feedback)"
             print(f"   review ({model_note(reply)})")
 
-            attempts_left = MAX_ATTEMPTS - attempt
+            attempts_left = max_attempts - attempt
             reply = await ask(
                 "orchestrator",
                 roles.ORCHESTRATOR_SYSTEM,

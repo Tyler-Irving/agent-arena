@@ -50,7 +50,13 @@ def test_parse_decision(reply: str, decision: str | None) -> None:
     assert roles.parse_decision(reply) == decision
 
 
-def _run_team(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, replies: dict[str, list], grades: list[bool]):
+def _run_team(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    replies: dict[str, list],
+    grades: list[bool],
+    max_attempts: int = 3,
+):
     """Run problem 001 through the team loop with scripted replies per role and grades."""
     seen: list[tuple[str, str]] = []  # (role, prompt) for each call, in order
 
@@ -68,7 +74,9 @@ def _run_team(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, replies: dict[str
     monkeypatch.setattr(orchestrator, "complete", fake_complete)
     monkeypatch.setattr(orchestrator, "grade", fake_grade)
     log = RunLog(tmp_path / "arena.db")
-    lineup = Lineup.model_validate({"name": "fake-team", "mode": "team", "roles": TEAM})
+    lineup = Lineup.model_validate(
+        {"name": "fake-team", "mode": "team", "roles": TEAM, "max_attempts": max_attempts}
+    )
     run_id, outcomes = asyncio.run(
         orchestrator.run_lineup(lineup, load_problems("001"), SqliteTaskBoard(tmp_path / "arena.db"), log)
     )
@@ -297,3 +305,18 @@ def test_assumed_retry_is_not_reported_as_a_choice(monkeypatch, tmp_path) -> Non
 )
 def test_decision_reason(reply: str, reason: str) -> None:
     assert roles.decision_reason(reply) == reason
+
+
+def test_lineup_max_attempts_sets_the_limit(monkeypatch, tmp_path) -> None:
+    bad = "```python\nbad\n```"
+    replies = {
+        "planner": [_reply("plan"), _reply("simpler plan")],
+        "coder": [_reply(bad)] * 4 + [_reply("```python\ngood\n```")],
+        "reviewer": [_reply("fix it")] * 4,
+        "orchestrator": [_reply("DECISION: RETRY")] * 3 + [_reply("DECISION: REPLAN")],
+    }
+    _, outcome, seen = _run_team(monkeypatch, tmp_path, replies, [False] * 4 + [True], max_attempts=5)
+
+    assert (outcome.passed, outcome.attempts) == (True, 5)
+    decide_prompts = [prompt for role, prompt in seen if role == "orchestrator"]
+    assert "4 attempt(s) left" in decide_prompts[0] and "1 attempt(s) left" in decide_prompts[-1]

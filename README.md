@@ -15,7 +15,7 @@ multi-agent setups behave.
 ## How a problem gets solved
 
 **Solo mode:** one model gets the problem, writes `solution.py`, sees the test
-failures, and retries. Up to 3 attempts.
+failures, and retries. Up to 3 attempts (a lineup can set `max_attempts`).
 
 **Team mode:** four roles, each of which can be a different model.
 
@@ -33,7 +33,7 @@ problem ──▶│ planner │────────▶│ coder │──�
 
 The reviewer explains why the tests failed. The orchestrator then decides: **retry**
 (the coder fixes the code using the review), **replan** (the planner writes a new
-approach), or **give up**. Hard limits: 3 attempts and 20 model calls per problem.
+approach), or **give up**. Hard limits: 3 attempts (or the lineup's `max_attempts`) and 20 model calls per problem.
 
 ## Quick start
 

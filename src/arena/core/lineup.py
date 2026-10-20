@@ -4,11 +4,13 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from arena.models.router import can_disable_thinking
 
 LINEUPS_FILE = Path("config/lineups.yaml")
+DEFAULT_MAX_ATTEMPTS = 3
+MAX_CALLS = 20  # model calls per problem, whatever the lineup
 
 REQUIRED_ROLES = {
     "solo": {"solo"},
@@ -25,6 +27,9 @@ class Lineup(BaseModel):
     name: str
     mode: Literal["solo", "team"]
     roles: dict[str, RoleConfig]
+    # Graded attempts per problem. A different limit is a different lineup, so
+    # it gets its own scoreboard row.
+    max_attempts: int = Field(DEFAULT_MAX_ATTEMPTS, ge=1)
 
     @field_validator("roles", mode="before")
     @classmethod
@@ -40,6 +45,16 @@ class Lineup(BaseModel):
         for role, cfg in self.roles.items():
             if cfg.think is False and not can_disable_thinking(cfg.model):
                 raise ValueError(f"lineup {self.name!r} role {role}: {cfg.model} cannot turn thinking off")
+        # A lineup must be able to use every attempt it asks for. Solo: one call
+        # per attempt. Team: the plan, a coder call per attempt, and between
+        # attempts a review, a decision and possibly a replan: 1 + n + 3(n - 1).
+        n = self.max_attempts
+        worst = n if self.mode == "solo" else 4 * n - 2
+        if worst > MAX_CALLS:
+            raise ValueError(
+                f"lineup {self.name!r}: max_attempts {n} can need {worst} calls, "
+                f"over the {MAX_CALLS}-call limit"
+            )
         return self
 
 

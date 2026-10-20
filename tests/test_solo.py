@@ -48,6 +48,30 @@ def test_config_lineups_load() -> None:
     lineups = load_lineups()
     assert lineups["opus-solo"].roles["solo"].model == "anthropic/claude-opus-5-5"
     assert lineups["sonnet-orch-qwen14b"].mode == "team"
+    assert lineups["sonnet-orch-qwen14b"].max_attempts == 3
+    assert lineups["sonnet-orch-qwen14b-5att"].max_attempts == 5
+
+
+def test_max_attempts_must_be_positive() -> None:
+    with pytest.raises(ValidationError, match="max_attempts"):
+        Lineup.model_validate({"name": "x", "mode": "solo", "roles": {"solo": "ollama/x"}, "max_attempts": 0})
+
+
+def test_max_attempts_must_fit_the_call_limit() -> None:
+    team = {role: "ollama/x" for role in ("orchestrator", "planner", "coder", "reviewer")}
+    # team worst case is 4n - 2 calls: 5 attempts need 18, 6 need 22
+    Lineup.model_validate({"name": "x", "mode": "team", "roles": team, "max_attempts": 5})
+    with pytest.raises(ValidationError, match="22 calls"):
+        Lineup.model_validate({"name": "x", "mode": "team", "roles": team, "max_attempts": 6})
+    solo = {"name": "x", "mode": "solo", "roles": {"solo": "ollama/x"}}
+    Lineup.model_validate({**solo, "max_attempts": 20})
+    with pytest.raises(ValidationError, match="21 calls"):
+        Lineup.model_validate({**solo, "max_attempts": 21})
+
+
+def test_5att_lineup_matches_its_base() -> None:
+    lineups = load_lineups()
+    assert lineups["sonnet-orch-qwen14b-5att"].roles == lineups["sonnet-orch-qwen14b"].roles
 
 
 # --- task board ------------------------------------------------------------
@@ -130,7 +154,9 @@ def _grade(passed: bool) -> GradeResult:
     )
 
 
-def _run_solo(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, replies: list, grades: list[bool]):
+def _run_solo(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, replies: list, grades: list[bool], max_attempts: int = 3
+):
     """Run problem 001 through the solo loop with scripted replies and grades."""
     seen_messages: list[list[dict]] = []
 
@@ -147,7 +173,9 @@ def _run_solo(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, replies: list, gr
     monkeypatch.setattr(orchestrator, "complete", fake_complete)
     monkeypatch.setattr(orchestrator, "grade", fake_grade)
     log = RunLog(tmp_path / "arena.db")
-    lineup = Lineup.model_validate({"name": "fake-solo", "mode": "solo", "roles": {"solo": "fake/model"}})
+    lineup = Lineup.model_validate(
+        {"name": "fake-solo", "mode": "solo", "roles": {"solo": "fake/model"}, "max_attempts": max_attempts}
+    )
     run_id, outcomes = asyncio.run(
         orchestrator.run_lineup(lineup, load_problems("001"), SqliteTaskBoard(tmp_path / "arena.db"), log)
     )
@@ -176,6 +204,15 @@ def test_solo_gives_up_after_max_attempts(monkeypatch, tmp_path) -> None:
 
     assert (outcome.passed, outcome.attempts, outcome.calls) == (False, 3, 3)
     assert "did not contain" in seen[1][2]["content"]
+
+
+@pytest.mark.parametrize("limit", [1, 4])
+def test_solo_uses_the_lineup_attempt_limit(monkeypatch, tmp_path, limit: int) -> None:
+    replies = [_reply("```python\nbad\n```") for _ in range(limit)]
+    log, _, outcome, _ = _run_solo(monkeypatch, tmp_path, replies, [False] * limit, max_attempts=limit)
+
+    assert (outcome.passed, outcome.attempts, outcome.calls) == (False, limit, limit)
+    assert log.db.execute("SELECT max_attempts FROM runs").fetchone()[0] == limit
 
 
 def test_solo_unknown_price_makes_cost_unknown(monkeypatch, tmp_path) -> None:

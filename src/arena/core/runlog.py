@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS runs (
     started_at TEXT NOT NULL,
     finished_at TEXT,
     problem TEXT,  -- the --problem selector, NULL when the run covered every problem
+    max_attempts INTEGER,  -- the lineup's attempt limit for this run
     interrupted INTEGER  -- 1 if stopped by Ctrl-C/SIGTERM before finishing
 );
 
@@ -77,6 +78,7 @@ ADDED_COLUMNS = [
     ("calls", "truncated", "INTEGER"),
     ("runs", "problem", "TEXT"),
     ("runs", "interrupted", "INTEGER"),
+    ("runs", "max_attempts", "INTEGER"),
 ]
 
 
@@ -100,10 +102,12 @@ class RunLog:
                 self.db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
         self.db.commit()
 
-    def start_run(self, lineup: str, plugin: str, problem: str | None = None) -> int:
+    def start_run(
+        self, lineup: str, plugin: str, problem: str | None = None, max_attempts: int | None = None
+    ) -> int:
         cur = self.db.execute(
-            "INSERT INTO runs (lineup, plugin, started_at, problem) VALUES (?, ?, ?, ?)",
-            (lineup, plugin, utc_now(), problem),
+            "INSERT INTO runs (lineup, plugin, started_at, problem, max_attempts) VALUES (?, ?, ?, ?, ?)",
+            (lineup, plugin, utc_now(), problem, max_attempts),
         )
         self.db.commit()
         assert cur.lastrowid is not None

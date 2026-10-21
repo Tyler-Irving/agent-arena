@@ -2,13 +2,15 @@
 
 Every task result in every run counts as one trial, so running a lineup
 again adds data rather than replacing it. Runs of one lineup under different
-attempt limits get separate rows. A trial's score is 0.0-1.0, and "passed"
+attempt limits, or different plugin settings, get separate rows. A trial's score is 0.0-1.0, and "passed"
 sums the scores, so for pass/fail plugins it counts the trials passed. Token
 and time figures are per-task averages. The per-run range shows how much a
 lineup's pass rate moves between runs, which is the noise any comparison has
 to beat. It only uses runs that covered every task and weren't interrupted, so
 runs of different task sets aren't compared.
 """
+
+import json
 
 from pydantic import BaseModel
 
@@ -28,6 +30,7 @@ WITH call_totals AS (
 )
 SELECT runs.lineup,
        runs.max_attempts,
+       runs.settings,
        COUNT(DISTINCT runs.id) AS runs,
        COUNT(*) AS trials,
        SUM({SCORE}) AS passed,
@@ -43,27 +46,28 @@ JOIN runs ON runs.id = results.run_id
 LEFT JOIN call_totals
        ON call_totals.run_id = results.run_id AND call_totals.problem_id = results.problem_id
 WHERE runs.plugin = ? AND runs.id >= ?
-GROUP BY runs.lineup, runs.max_attempts
+GROUP BY runs.lineup, runs.max_attempts, runs.settings
 """
 
 RUN_RANGE = f"""
 WITH full_runs AS (
-    SELECT runs.lineup, runs.max_attempts, AVG({SCORE}) AS pass_rate
+    SELECT runs.lineup, runs.max_attempts, runs.settings, AVG({SCORE}) AS pass_rate
     FROM results
     JOIN runs ON runs.id = results.run_id
     WHERE runs.plugin = ? AND runs.id >= ?
       AND runs.problem IS NULL AND runs.finished_at IS NOT NULL AND NOT COALESCE(runs.interrupted, 0)
     GROUP BY runs.id
 )
-SELECT lineup, max_attempts, MIN(pass_rate) AS low, MAX(pass_rate) AS high
+SELECT lineup, max_attempts, settings, MIN(pass_rate) AS low, MAX(pass_rate) AS high
 FROM full_runs
-GROUP BY lineup, max_attempts
+GROUP BY lineup, max_attempts, settings
 """
 
 
 class ScoreRow(BaseModel):
     lineup: str
     max_attempts: int | None  # None for runs logged before the limit was recorded
+    settings: str | None  # the lineup's plugin settings as JSON; None if it has none
     runs: int
     trials: int
     passed: float  # sum of scores
@@ -76,6 +80,13 @@ class ScoreRow(BaseModel):
     # lowest and highest single-run pass rate over full runs; None if there are none
     run_low: float | None
     run_high: float | None
+
+    @property
+    def label(self) -> str:
+        """The lineup name, plus its settings if it has any: "some-lineup [players=5]"."""
+        if not self.settings:
+            return self.lineup
+        return f"{self.lineup} [{', '.join(f'{k}={v}' for k, v in json.loads(self.settings).items())}]"
 
     @property
     def pass_rate(self) -> float:
@@ -94,16 +105,18 @@ def scoreboard(log: RunLog, plugin: str, since: int | None = None) -> list[Score
     """
     params = (plugin, since or 0)
     ranges = {
-        (r["lineup"], r["max_attempts"]): (r["low"], r["high"]) for r in log.db.execute(RUN_RANGE, params)
+        (r["lineup"], r["max_attempts"], r["settings"]): (r["low"], r["high"])
+        for r in log.db.execute(RUN_RANGE, params)
     }
     rows = []
     for r in log.db.execute(QUERY, params):
         cost_known = r["priced_trials"] == r["trials"]
-        low, high = ranges.get((r["lineup"], r["max_attempts"]), (None, None))
+        low, high = ranges.get((r["lineup"], r["max_attempts"], r["settings"]), (None, None))
         rows.append(
             ScoreRow(
                 lineup=r["lineup"],
                 max_attempts=r["max_attempts"],
+                settings=r["settings"],
                 runs=r["runs"],
                 trials=r["trials"],
                 passed=r["passed"],
@@ -141,7 +154,7 @@ def format_scoreboard(rows: list[ScoreRow]) -> str:
     ]
     table = [
         [
-            r.lineup,
+            r.label,
             "?" if r.max_attempts is None else str(r.max_attempts),
             str(r.runs),
             f"{_count(r.passed)}/{r.trials}",

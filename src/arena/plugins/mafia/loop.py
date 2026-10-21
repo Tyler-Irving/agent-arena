@@ -84,7 +84,8 @@ class MafiaGame:
         state = self.state
         targets = kill_targets(state)
         victim: str | None = None
-        proposal: tuple[str, str] | None = None
+        chooser = "random"  # who picked the victim; "random" if no mafia reply named a valid target
+        proposal: roles.Proposal | None = None
         mafia = state.mafia()
         # With two mafia alive, the first proposes and the second, seeing that, decides.
         for i, m in enumerate(mafia):
@@ -92,13 +93,12 @@ class MafiaGame:
             reply = await self.ask(m, roles.kill_task(n, targets, proposal, partner_decides))
             choice = parse_choice(reply, "TARGET", targets)
             if choice.name is not None:
-                victim = choice.name  # the last valid choice stands
+                victim, chooser = choice.name, m.name  # the last valid choice stands
             else:
                 self.invalid["target"] += 1
-            proposal = (m.name, reply[: roles.MAX_SPEECH_CHARS])
+            proposal = roles.Proposal(m.name, choice.name, roles.one_line(reply))
         if victim is None:
             victim = self.rng.choice(targets)  # every night kills, so every game ends
-        self.event("night", n, "kill", mafia[-1].name, victim, None)
 
         detective = next((p for p in state.alive() if p.role == "detective"), None)
         if detective is not None:
@@ -115,6 +115,7 @@ class MafiaGame:
             self.checks.append(result)  # the check resolves before the kill
             self.event("night", n, "check", detective.name, checked, result)
 
+        self.event("night", n, "kill", chooser, victim, None)
         dead = state.get(victim)
         dead.alive = False
         self.out.append({"name": dead.name, "role": dead.role, "when": f"night {n}"})
@@ -126,7 +127,7 @@ class MafiaGame:
         speakers = speaking_order(state, n)
         for p in speakers:
             reply = await self.ask(p, roles.speech_task(n))
-            text = reply.strip()[: roles.MAX_SPEECH_CHARS] or "(says nothing)"
+            text = roles.one_line(reply) or roles.SILENT
             self.public.append(roles.speech_line(n, p.name, text))
             self.event("day", n, "speech", p.name, None, text)
 

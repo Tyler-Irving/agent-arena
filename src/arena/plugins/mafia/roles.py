@@ -5,9 +5,12 @@ Players see code-written fact lines and each other's speeches, never the
 narrator's text, so the narrator can't leak or distort anything.
 """
 
+from typing import NamedTuple
+
 from arena.plugins.mafia.game import GameState, Player, Role
 
 MAX_SPEECH_CHARS = 600  # longer speeches are cut before anyone sees them
+SILENT = "(says nothing)"  # what others see for an empty speech
 
 PLAYER_SYSTEM = f"""\
 You are a player in a game of Mafia, a social deduction game played in text.
@@ -43,6 +46,15 @@ def _role_phrase(role: Role) -> str:
 
 def death_fact(night: int, player: Player) -> str:
     return f"Night {night}: {player.name} was killed. {player.name} was {_role_phrase(player.role)}."
+
+
+def one_line(text: str) -> str:
+    """A reply as shared with others: one line, cut to MAX_SPEECH_CHARS.
+
+    Collapsing newlines means a speech can't add lines that look like the
+    code-written facts around it.
+    """
+    return " ".join(text.split())[:MAX_SPEECH_CHARS]
 
 
 def speech_line(day: int, name: str, text: str) -> str:
@@ -106,11 +118,20 @@ def player_prompt(state: GameState, player: Player, checks: list[str], public: l
 # --- tasks ----------------------------------------------------------------------------
 
 
-def kill_task(night: int, targets: list[str], proposal: tuple[str, str] | None, partner_decides: bool) -> str:
+class Proposal(NamedTuple):
+    who: str
+    target: str | None  # None if their reply named no valid target
+    reasoning: str  # their reply, as one_line
+
+
+def kill_task(night: int, targets: list[str], proposal: Proposal | None, partner_decides: bool) -> str:
     task = f"It is night {night}. As mafia, choose a town player to kill."
     if proposal is not None:
-        who, text = proposal
-        task += f"\n\nYour partner {who} proposed:\n{text}\n\nYou make the final choice."
+        picked = f"proposed killing {proposal.target}" if proposal.target else "named no valid target"
+        task += (
+            f"\n\nYour partner {proposal.who} {picked}. Their reasoning: {proposal.reasoning}"
+            "\n\nYou make the final choice."
+        )
     elif partner_decides:
         task += " Your partner will see your proposal and make the final choice."
     return f"{task}\n\nEnd your reply with one line: TARGET: <name>, choosing from {', '.join(targets)}."

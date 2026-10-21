@@ -150,7 +150,13 @@
   - Leak audit over every stored prompt: no player prompt held narrator-only text, partner info outside
     mafia, or check results outside the detective. (gpt-oss's night-1 narration repeated the fact line
     verbatim, which first looked like a leak; it isn't, the fact line is meant to be public.)
-- Next: step 5, /code-review + /security-review, fix, PR. Sonnet games need the user's OK (~$0.45 each est.).
+- Step 5: /security-review no findings. /code-review 9 findings, 7 fixed: the deciding mafia now gets the
+  parsed proposal (a 600-char cut used to drop the TARGET line); speeches collapse to one line (no forged
+  fact lines); kill events name who chose ("random" for a fallback) and follow the check; runs.settings
+  column + scoreboard row per (lineup, max_attempts, settings); mafia lineups reject max_attempts;
+  --problem 3 works; "(says nothing)" moved to roles.py. Skipped: narrator call cost (narrator is the
+  user's flavor-only choice), per-event commits (same as the rest of the run log). 175 tests.
+- Sonnet games need the user's OK (~$0.45 each est.).
 
 ## Mafia gaps (core assumptions Mafia would still hit; not fixed yet)
 1. PARTLY: score = 1.0 if town won (decided). Still open: one Mafia lineup plays both sides, so define it (e.g. 1.0 = town won). The

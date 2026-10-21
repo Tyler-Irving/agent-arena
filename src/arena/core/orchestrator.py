@@ -31,7 +31,7 @@ async def run_lineup[T: TaskSpec](
     check_roles(lineup, plugin)
     set_runlog(log)  # the router logs calls to the same database as the run
     log.db.executescript(plugin.schema)
-    run_id = log.start_run(lineup.name, plugin.name, selector, lineup.max_attempts)
+    run_id = log.start_run(lineup.name, plugin.name, selector, lineup.max_attempts, lineup.settings)
     by_id = {t.id: t for t in tasks}
     for t in tasks:
         await board.put(run_id, t.id)

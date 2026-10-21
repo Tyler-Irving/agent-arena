@@ -131,9 +131,15 @@
   seeded tie-break, none cast = nobody out), winner, parse_choice (last KEYWORD: line, bold-tolerant,
   Choice(name, valid)), worst_case_calls: exhaustive over kills/eliminations = 25/39/45 calls for 5/6/7
   players (max_calls 60). tests/test_mafia_game.py, 28 tests.
-- Next: step 3, roles.py + loop.py + plugin.py + registry, scripted-game tests (visibility: no narrator text
-  or other votes in player prompts; identical deals across lineups). Then lineups, docs and one local +
-  one Haiku game (Sonnet games need the user's OK).
+- Step 3 DONE: roles.py (prompts + code-written fact lines), loop.py (MafiaGame: night = mafia propose /
+  partner decides, detective check, kill; day = speeches in rotating order, blind votes, one votes fact;
+  narrator text only in mafia_events), plugin.py (Mafia: modes game -> narrator/mafia/detective/villager,
+  max_calls 60, settings players 5-7, at most one ollama model, game-01..10), registered in PLUGINS.
+  tests/test_mafia_loop.py (15): town win (29 calls), mafia win (36), unusable replies still end, provider
+  error unscored, visibility (narrator text, blind votes, partner/check privacy), rotation, identical deals.
+  Mutation-checked: planting a narrator leak, mid-vote reveal, or no rotation each fails a test.
+- Next: step 4, mafia lineups in config/lineups.yaml, docs (CLAUDE.md Mafia section incl. blind votes),
+  then one mafia-gptoss game (local) and one mafia-haiku game (~$0.05). Sonnet games need the user's OK.
 
 ## Mafia gaps (core assumptions Mafia would still hit; not fixed yet)
 1. What a score means: one Mafia lineup plays both sides, so define it (e.g. 1.0 = town won). The

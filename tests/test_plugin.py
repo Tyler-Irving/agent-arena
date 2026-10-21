@@ -100,14 +100,14 @@ def test_registry_lookup() -> None:
 
 
 def test_unknown_plugin_name() -> None:
-    with pytest.raises(KeyError, match="unknown plugin 'mafia'; choose from: code_bounty"):
-        get_plugin("mafia")
+    with pytest.raises(KeyError, match="unknown plugin 'chess'; choose from: code_bounty, mafia"):
+        get_plugin("chess")
 
 
 def test_lineup_with_unknown_plugin_is_rejected(tmp_path: Path) -> None:
     path = tmp_path / "lineups.yaml"
-    path.write_text("x:\n  plugin: mafia\n  mode: game\n  roles: { narrator: ollama/x }\n")
-    with pytest.raises(ValueError, match="unknown plugin 'mafia'"):
+    path.write_text("x:\n  plugin: chess\n  mode: game\n  roles: { narrator: ollama/x }\n")
+    with pytest.raises(ValueError, match="unknown plugin 'chess'"):
         load_lineups(PLUGINS, DEFAULT_PLUGIN, path)
 
 
@@ -278,8 +278,8 @@ def test_cli_reports_an_invalid_lineup_config(monkeypatch, tmp_path, capsys) -> 
 
 
 def test_cli_scoreboard_unknown_plugin(capsys) -> None:
-    assert cli.show_scoreboard("mafia", None) == 2
-    assert "unknown plugin 'mafia'; choose from: code_bounty" in capsys.readouterr().err
+    assert cli.show_scoreboard("chess", None) == 2
+    assert "unknown plugin 'chess'; choose from: code_bounty, mafia" in capsys.readouterr().err
 
 
 def test_core_imports_no_plugin() -> None:

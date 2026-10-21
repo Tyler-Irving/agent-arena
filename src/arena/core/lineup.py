@@ -29,7 +29,7 @@ class RoleConfig(BaseModel):
 
 
 class Lineup(BaseModel):
-    # A misspelled key (`plugn: mafia`) is an error, not a lineup that quietly
+    # A misspelled key (`plugn: ...`) is an error, not a lineup that quietly
     # runs with the defaults.
     model_config = ConfigDict(extra="forbid")
 

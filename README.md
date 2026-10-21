@@ -3,7 +3,8 @@
 A small, hand-written multi-agent system for comparing model **lineups** — mixes of
 local Ollama models and Claude models via the Anthropic API — on the same tasks.
 
-The first task type is a **code bounty board**: the orchestrator posts coding problems,
+Each task type is a **plugin**, and the core loop doesn't know which one it is running.
+The first plugin is a **code bounty board**: the orchestrator posts coding problems,
 workers write solutions, and a locked-down Docker sandbox grades them with pytest. Every
 model call, attempt and result goes into SQLite, so you can compare pass rate, attempts,
 tokens, cost and time per lineup, and read any run back like a transcript.
@@ -52,6 +53,7 @@ uv run arena run --lineup all-local-gptoss --problem 002
 uv run arena run --lineup qwen14b-solo --repeat 5  # five runs, to see run-to-run noise
 uv run arena scoreboard                            # compare lineups across all runs
 uv run arena scoreboard --since 17                 # only run 17 and later
+uv run arena scoreboard --plugin code_bounty       # one plugin's lineups (code_bounty is the default)
 ```
 
 Ctrl-C or SIGTERM stops a run cleanly: the run is closed and marked interrupted, and the
@@ -63,8 +65,10 @@ on `http://localhost:11434`.
 
 ## Lineups
 
-Lineups live in [`config/lineups.yaml`](config/lineups.yaml). Each one is a mode plus a
-model per role. Model names are prefixed by provider:
+Lineups live in [`config/lineups.yaml`](config/lineups.yaml). Each one is a plugin
+(`plugin:`, optional, defaults to `code_bounty`), a mode, and a model per role. The plugin
+decides which modes exist and which roles each one needs. Unknown keys are an error, so a
+typo can't quietly fall back to the defaults. Model names are prefixed by provider:
 
 ```yaml
 sonnet-orch-qwen14b:
@@ -114,22 +118,30 @@ src/arena/
   cli.py                     arena smoke | run | scoreboard
   models/router.py           one async complete() over Anthropic and Ollama
   models/pricing.py          per-model token prices (local models are free)
-  core/orchestrator.py       solo and team loops
+  core/plugin.py             the Plugin protocol, and the Session/Outcome a plugin works with
+  core/orchestrator.py       run_lineup: runs a plugin's tasks, logs results, handles Ctrl-C
   core/taskboard.py          TaskBoard protocol + SQLite implementation
-  core/runlog.py             SQLite log of runs, calls, attempts and results
+  core/runlog.py             SQLite log of runs, calls and results
   core/scoreboard.py         per-lineup aggregates
-  core/lineup.py             lineup config loading
-  plugins/code_bounty/       prompts (roles.py), grader, problem loading
+  core/lineup.py             lineup config loading, checked against each lineup's plugin
+  plugins/__init__.py        the plugin registry: a plain dict of name -> plugin
+  plugins/code_bounty/       solo/team loops (loop.py), prompts (roles.py), grader, problems
 docker/arena-grader/         grading sandbox image
 config/lineups.yaml          lineups
 problems/                    coding problems
 tests/                       pytest suite (grader tests skip without Docker)
 ```
 
+## Adding a task type
+
+A plugin is a plain object with a name, its modes and the roles each one needs, a call
+limit per task, `load_tasks`, `validate_lineup` and `run_task`. It is listed in
+`src/arena/plugins/__init__.py`. See "Adding a plugin" in [CLAUDE.md](CLAUDE.md).
+
 ## Development
 
 ```bash
-uv run ruff check src tests && uv run pyright src tests && uv run pytest -q
+uv run ruff check src tests && uv run ruff format --check src tests && uv run pyright src tests && uv run pytest -q
 ```
 
 ## Status
@@ -142,6 +154,7 @@ uv run ruff check src tests && uv run pyright src tests && uv run pytest -q
 | 4. Run log + scoreboard | ✅ | `step-4-scoreboard` |
 | 5. Team mode | ✅ | `step-5-team` |
 | 6. Ten problems, mostly medium or harder | ✅ | `step-6-problems` |
+| 7. Plugin interface, making room for a second task type | ✅ | `step-7-plugins` |
 
 The first three problems are warm-ups. Problems 004-010 are medium to hard, and
 each one has edge cases that its prompt states but that are easy to miss

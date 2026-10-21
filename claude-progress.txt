@@ -126,8 +126,14 @@
   town won, metrics JSON for the rest, Mafia report later; at most one Ollama model per lineup; seeds come
   from the game id only (game-03 deals identically in every lineup); 5-7 players, max_calls = 60.
 - Step 1 DONE: Lineup.settings (plugin-specific, checked by validate_lineup); code_bounty rejects settings.
-- Next: step 2, plugins/mafia/game.py (pure rules) + tests. Then roles/loop/plugin, then lineups, docs and
-  one local + one Haiku game (Sonnet games need the user's OK).
+- Step 2 DONE: plugins/mafia/game.py, pure rules: deal (random.Random(f"{game_id}:deal")), play_rng
+  ("{game_id}:play"), speaking_order (rotating start, skips the dead), targets, resolve_votes (plurality,
+  seeded tie-break, none cast = nobody out), winner, parse_choice (last KEYWORD: line, bold-tolerant,
+  Choice(name, valid)), worst_case_calls: exhaustive over kills/eliminations = 25/39/45 calls for 5/6/7
+  players (max_calls 60). tests/test_mafia_game.py, 28 tests.
+- Next: step 3, roles.py + loop.py + plugin.py + registry, scripted-game tests (visibility: no narrator text
+  or other votes in player prompts; identical deals across lineups). Then lineups, docs and one local +
+  one Haiku game (Sonnet games need the user's OK).
 
 ## Mafia gaps (core assumptions Mafia would still hit; not fixed yet)
 1. What a score means: one Mafia lineup plays both sides, so define it (e.g. 1.0 = town won). The

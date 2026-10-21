@@ -59,6 +59,17 @@ def log(tmp_path: Path) -> RunLog:
     return log
 
 
+def test_different_settings_get_their_own_row(tmp_path: Path) -> None:
+    log = RunLog(tmp_path / "arena.db")
+    for settings in (None, {"players": 5}, {"players": 5}):
+        run = log.start_run("game", "duel", max_attempts=3, settings=settings)
+        _trial(log, run, "g1", passed=True, attempts=1, cost=0.0)
+        log.finish_run(run)
+    rows = {r.label: r for r in scoreboard(log, "duel")}
+    assert {label: r.runs for label, r in rows.items()} == {"game": 1, "game [players=5]": 2}
+    assert "game [players=5]" in format_scoreboard(list(rows.values()))
+
+
 def test_aggregates_per_lineup(log: RunLog) -> None:
     rows = {r.lineup: r for r in scoreboard(log, "code_bounty")}
     assert set(rows) == {"cheap", "local", "unpriced"}

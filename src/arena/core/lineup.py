@@ -29,7 +29,7 @@ class RoleConfig(BaseModel):
 
 
 class Lineup(BaseModel):
-    # A misspelled key (`plugn: mafia`) is an error, not a lineup that quietly
+    # A misspelled key (`plugn: ...`) is an error, not a lineup that quietly
     # runs with the defaults.
     model_config = ConfigDict(extra="forbid")
 
@@ -40,6 +40,8 @@ class Lineup(BaseModel):
     # Attempts per task, for plugins that retry. A different limit is a
     # different lineup, so it gets its own scoreboard row.
     max_attempts: int = Field(DEFAULT_MAX_ATTEMPTS, ge=1)
+    # Plugin-specific options (e.g. a game's player count), checked by the plugin's validate_lineup.
+    settings: dict[str, Any] = {}
 
     @field_validator("roles", mode="before")
     @classmethod

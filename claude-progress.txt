@@ -1,9 +1,10 @@
 # claude-progress.txt — session state (updated 2026-10-21)
 
 ## Start here
-- Build order: steps 1-6 DONE and merged to main (tags step-1-router .. step-6-problems).
-  Step 7 (plugin interface) is on branch refactor/plugin-interface, PR open; user tags step-7-plugins
-  after merge. Next: the Mafia plugin (see "Mafia gaps" below).
+- Build order: steps 1-7 DONE and merged to main (tags step-1-router .. step-6-problems; step 7 =
+  PR #13, plugin interface; user tags step-7-plugins).
+- In progress: Mafia plugin on branch feat/mafia. Approved plan, step by step with a stop after each:
+  ~/.claude/plans/indexed-pondering-twilight.md (see "Mafia plugin" below).
 - GitHub: https://github.com/Tyler-Irving/agent-arena (private). main has steps 1-6, merged
   through one PR per step; build steps are tagged step-1-router .. step-6-problems.
 - Run /code-review before any PR.
@@ -119,18 +120,61 @@
   was ever aborted, so the scoreboard is unchanged); run_lineup checks mode + roles of directly built
   lineups (check_roles); `arena run` prints invalid lineup config errors and exits 2, no traceback.
 
+## Mafia plugin (branch feat/mafia, started 2026-10-21)
+- Decisions: code enforces rules, LLM narrator is flavor only and players never see its text; one speech
+  round in seat order (first speaker rotates daily), then blind votes revealed together; score = 1.0 if
+  town won, metrics JSON for the rest, Mafia report later; at most one Ollama model per lineup; seeds come
+  from the game id only (game-03 deals identically in every lineup); 5-7 players, max_calls = 60.
+- Step 1 DONE: Lineup.settings (plugin-specific, checked by validate_lineup); code_bounty rejects settings.
+- Step 2 DONE: plugins/mafia/game.py, pure rules: deal (random.Random(f"{game_id}:deal")), play_rng
+  ("{game_id}:play"), speaking_order (rotating start, skips the dead), targets, resolve_votes (plurality,
+  seeded tie-break, none cast = nobody out), winner, parse_choice (last KEYWORD: line, bold-tolerant,
+  Choice(name, valid)), worst_case_calls: exhaustive over kills/eliminations = 25/39/45 calls for 5/6/7
+  players (max_calls 60). tests/test_mafia_game.py, 28 tests.
+- Step 3 DONE: roles.py (prompts + code-written fact lines), loop.py (MafiaGame: night = mafia propose /
+  partner decides, detective check, kill; day = speeches in rotating order, blind votes, one votes fact;
+  narrator text only in mafia_events), plugin.py (Mafia: modes game -> narrator/mafia/detective/villager,
+  max_calls 60, settings players 5-7, at most one ollama model, game-01..10), registered in PLUGINS.
+  tests/test_mafia_loop.py (15): town win (29 calls), mafia win (36), unusable replies still end, provider
+  error unscored, visibility (narrator text, blind votes, partner/check privacy), rotation, identical deals.
+  Mutation-checked: planting a narrator leak, mid-vote reveal, or no rotation each fails a test.
+- Step 4 DONE: lineups mafia-haiku, mafia-gptoss, mafia-sonnet-vs-haiku, mafia-haiku-vs-sonnet; CLAUDE.md
+  Mafia section (rules incl. blind votes, visibility, call bound) + schema; README Mafia section.
+- First real games, both game-01 (same deal: Blake + Emery mafia, Avery detective):
+  - run 27 mafia-gptoss: MAFIA WON on night 2, 21 calls, 188 s, $0. Detective checked Finley (not mafia)
+    and claimed on day 1; town split its votes and eliminated villager Gray; Avery killed night 2.
+  - run 28 mafia-haiku: TOWN WON on day 2, 29 calls, 118 s, $0.0100. Mafia agreed on Casey; Avery checked
+    Blake, claimed detective on day 1, town voted Blake out (Emery posed as villager and attacked the
+    claim); day 2 town read Emery's defence of Blake and voted Emery out. Town votes on mafia 6/7.
+  - Zero invalid replies in both. Max prompt 2,283 input tokens (Haiku), well inside 16k local context.
+  - Leak audit over every stored prompt: no player prompt held narrator-only text, partner info outside
+    mafia, or check results outside the detective. (gpt-oss's night-1 narration repeated the fact line
+    verbatim, which first looked like a leak; it isn't, the fact line is meant to be public.)
+- Step 5: /security-review no findings. /code-review 9 findings, 7 fixed: the deciding mafia now gets the
+  parsed proposal (a 600-char cut used to drop the TARGET line); speeches collapse to one line (no forged
+  fact lines); kill events name who chose ("random" for a fallback) and follow the check; runs.settings
+  column + scoreboard row per (lineup, max_attempts, settings); mafia lineups reject max_attempts;
+  --problem 3 works; "(says nothing)" moved to roles.py. Skipped: narrator call cost (narrator is the
+  user's flavor-only choice), per-event commits (same as the rest of the run log). 175 tests.
+- run 29 mafia-gptoss game-02 (after the fixes): TOWN WON on day 2, 29 calls, 175 s. The deciding mafia
+  overrode the partner's proposal (Drew -> Blake); kill event credits it correctly; no multi-line speeches.
+- PR open for feat/mafia; user tags step-8-mafia after merge.
+- Next ideas, not done: a Mafia report (win rate by side / model across seats), mafia-sonnet-vs-haiku and
+  mafia-haiku-vs-sonnet games (need the user's OK, ~$0.45 each est.), several runs per lineup for noise.
+
 ## Mafia gaps (core assumptions Mafia would still hit; not fixed yet)
-1. What a score means: one Mafia lineup plays both sides, so define it (e.g. 1.0 = town won). The
+1. PARTLY: score = 1.0 if town won (decided). Still open: one Mafia lineup plays both sides, so define it (e.g. 1.0 = town won). The
    scoreboard groups by lineup only; Mafia wants win rate per side/model, i.e. its own report. The
    limit/attempts columns, the "passed" wording and the footer are bounty-shaped.
-2. max_attempts on Lineup/runs is a retry budget; Mafia ignores it but "limit 3" still shows.
-3. HALF DONE: no plugin-specific lineup settings (players: 7, seed). extra="forbid" now rejects unknown
+2. OPEN: max_attempts on Lineup/runs is a retry budget; Mafia ignores it but "limit 3" still shows
+   (also in the run header: "max 3 attempts").
+3. DONE on feat/mafia (Lineup.settings + extra="forbid"). Was: no plugin-specific lineup settings (players: 7, seed). extra="forbid" now rejects unknown
    keys instead of silently dropping them; a `settings:` field checked by validate_lineup is still needed.
 4. One model per role: several villagers share one RoleConfig (fine unless per-player models are wanted).
-5. max_calls is a per-plugin constant; if calls grow with player count, make it a function of the lineup.
-6. CLI wording: "N problem(s)", "max N attempts", "X/Y passed", --problem, "no problems match".
-7. VRAM: concurrent night actions across different local models make Ollama swap; the plugin must run
-   them one at a time (core can't enforce it).
+5. CLOSED: max_calls stays a constant; worst_case_calls proves 45 <= 60 for the largest legal game.
+6. OPEN: CLI wording: "N problem(s)", "max N attempts", "X/Y passed", --problem, "no problems match",
+   and the empty-scoreboard hint suggests haiku-solo for every plugin.
+7. ENFORCED: Mafia's calls are sequential and validate_lineup allows at most one ollama model.
 8. Naming: problem_id kwargs/columns mean task id (cosmetic).
 Checked OK: core makes no model calls itself (no one-solver assumption), no grader in core, roles and
 limits come from the plugin, Session.call's role_name is free text (log "villager-2"), calls.messages

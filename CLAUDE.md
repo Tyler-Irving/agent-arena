@@ -1,6 +1,6 @@
 # Agent Arena
 
-A local orchestrator/worker multi-agent system for running tasks across different model lineups (local Ollama models and the Anthropic API) and comparing how they do. Each kind of task is a **plugin**. Core runs the bookkeeping (runs, task board, call limit, cost, run log, Ctrl-C); a plugin owns its tasks and the loop of model calls for each one. The one plugin so far is the **code bounty board**: the orchestrator posts coding problems, workers solve them, a sandboxed test runner grades them. Mafia is planned next.
+A local orchestrator/worker multi-agent system for running tasks across different model lineups (local Ollama models and the Anthropic API) and comparing how they do. Each kind of task is a **plugin**. Core runs the bookkeeping (runs, task board, call limit, cost, run log, Ctrl-C); a plugin owns its tasks and the loop of model calls for each one. There are two plugins. The **code bounty board**: the orchestrator posts coding problems, workers solve them, a sandboxed test runner grades them. **Mafia**: 5-7 agents play a social deduction game, each seeing only its own view, and the score is which side won.
 
 The point of this project is learning how multi-agent systems behave, so keep the core small and readable. No agent frameworks (no LangChain, LangGraph, CrewAI). Write the loop ourselves.
 
@@ -34,6 +34,11 @@ src/arena/             # package (src layout; `arena` script -> arena.cli:main)
       roles.py         # system prompts for orchestrator, solo, planner, coder, reviewer
       grader.py        # runs tests in Docker, returns pass/fail + output
       problems.py      # loads problems/, extracts code from model replies
+    mafia/
+      plugin.py        # Mafia: one mode (game), 60-call limit, settings.players, game-01..game-10
+      game.py          # pure rules: deal, speaking order, votes, choice parsing, win check, call bound
+      loop.py          # MafiaGame: nights and days via session.call, the mafia_events table
+      roles.py         # player and narrator prompts, code-written fact lines
   cli.py               # entry point; the only place that wires core to the plugin registry
 tests/                 # pytest unit tests; grader tests skip if Docker/image missing
 docker/
@@ -156,6 +161,23 @@ A problem scores 1.0 if its tests pass, else 0.0.
 
 Only one Ollama model should be loaded at a time (16GB VRAM). Run tasks sequentially within a lineup, and run a plugin's calls within a task one at a time when they use different local models.
 
+## Mafia
+
+One task is one game: `game-01`..`game-10` (`--problem 03` or `--problem game-03`). Code applies every rule in `game.py`; models only choose kills, checks, speeches and votes. Score is 1.0 if town won, else 0.0, so the scoreboard's pass column is the town win rate. The results metrics hold the winner, nights/days, the mafia, who left when, detective checks and mafia found, town votes and town votes on mafia, and invalid replies by kind.
+
+Rules:
+- Lineups take `settings.players` 5-7 (default 7) and no `max_attempts` (a game has no attempts). 7 players: 2 mafia, 1 detective, 4 villagers; 5-6: 1 mafia, 1 detective, the rest villagers. Names come from a fixed list.
+- Seeds depend only on the game id: the deal uses `random.Random(f"{game_id}:deal")`, play (tie-breaks, replacing invalid targets) `random.Random(f"{game_id}:play")`. game-03 deals the same seats and roles in every lineup. Never seed from the run id or lineup.
+- Night first. Each night the first living mafia proposes `TARGET: <name>`; the second sees the parsed proposal ("proposed killing X") plus the partner's reasoning, and makes the final choice. The detective names `CHECK: <name>` and privately learns mafia / not mafia. The check resolves before the kill.
+- Each day every living player speaks once, collapsed to one line and cut to 600 characters, so a speech can't add lines that look like code-written facts. Day N starts N-1 seats after seat 0, or at the next living seat. Then everyone votes `VOTE: <name>|none`.
+- **Votes are blind**: each voter sees the day's speeches but no one else's vote; all votes are revealed together in one fact line after everyone has voted. Plurality is eliminated; a tie is a seeded pick among the tied; no valid votes, no elimination.
+- Dead and eliminated players' roles are revealed. Town wins with no mafia left; mafia wins once mafia >= town.
+- Invalid replies (no line, a dead/unknown name, yourself) are an abstention, a wasted check, or a seeded random town kill, so every night kills and every game ends. No re-asks.
+
+What each agent sees: every call is a fresh single message: private info (role; mafia partner; the detective's results), the seating, the shared record, and the task. The shared record is only code-written fact lines (deaths, votes, eliminations, role reveals) and speeches. **Players never see narrator text.** The narrator gets only that phase's fact lines and its reply goes only to `mafia_events`, so it can neither leak nor distort the game. `calls.role` is `<role>:<name>` (e.g. `mafia:Blake`) or `narrator`, and `calls.messages` is exactly what that agent saw.
+
+Call bound: a night is one call per living mafia + detective + narrator; a day is a speech and a vote per living player + narrator. `worst_case_calls` searches every sequence of kills and eliminations: 25/39/45 calls for 5/6/7 players, under `max_calls = 60`. Lineups may use at most one distinct `ollama/*` model, since two would swap in VRAM on nearly every call.
+
 ## Grader sandbox
 
 Model-written code never runs directly on the host.
@@ -177,11 +199,12 @@ Model-written code never runs directly on the host.
 
 `problem_id` means the task id everywhere. Columns added later are listed in `ADDED_COLUMNS` in `runlog.py` and added to older databases when the run log opens. Never rename tables or columns.
 
-- `runs`: id, lineup, plugin, started_at, finished_at, problem (the --problem selector), max_attempts, interrupted (1 if stopped before finishing: Ctrl-C/SIGTERM or an error that aborted the run)
+- `runs`: id, lineup, plugin, started_at, finished_at, problem (the --problem selector), max_attempts, interrupted (1 if stopped before finishing: Ctrl-C/SIGTERM or an error that aborted the run), settings (the lineup's plugin settings as JSON, NULL if none). The scoreboard gives each (lineup, max_attempts, settings) its own row, shown as `name [players=5]` when there are settings.
 - `calls`: id, run_id, problem_id, role, model, input_tokens, output_tokens, reasoning_tokens, latency_ms, cost_usd, think, system, messages, response, reasoning, error, truncated, created_at
 - `results`: id, run_id, problem_id, passed, attempts, total_calls, total_cost_usd, wall_time_ms, score, metrics. `score` is 0.0-1.0, `passed` = (score == 1.0), `metrics` is the plugin's JSON. Rows from before plugins have score NULL, and the scoreboard reads `COALESCE(score, passed)`.
 - `tasks` (taskboard): id, run_id, problem_id, status (pending | running | done | failed), reason
 - `attempts` (code_bounty's `schema`): one row per graded attempt, holding code, passed, tests_passed/total, timed_out and output
+- `mafia_events` (mafia's `schema`): id, run_id, problem_id (game id), day (night/day number, 0 for the deal), phase (setup | night | day), kind (role | kill | check | speech | vote | elimination | announcement), actor, target, text
 
 ## TaskBoard
 
@@ -197,6 +220,8 @@ uv run arena run --lineup X --repeat 5     # five runs, to see run-to-run noise
 uv run arena scoreboard                    # pass rate, avg attempts, tokens, cost, time per lineup
 uv run arena scoreboard --since 17         # only run 17 and later
 uv run arena scoreboard --plugin X         # another plugin's lineups (default code_bounty)
+uv run arena run --lineup mafia-haiku --problem 03   # one Mafia game
+uv run arena scoreboard --plugin mafia     # pass = town win rate
 ```
 
 ## Build order
@@ -208,6 +233,7 @@ uv run arena scoreboard --plugin X         # another plugin's lineups (default c
 5. Team mode
 6. Remaining 7 problems
 7. Plugin interface (code_bounty behind `core/plugin.py`), to make room for Mafia
+8. Mafia plugin
 
 Stop after each step and confirm it works before moving on.
 

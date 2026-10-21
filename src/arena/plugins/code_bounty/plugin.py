@@ -19,6 +19,9 @@ class CodeBounty:
         return load_problems(selector)
 
     def validate_lineup(self, lineup: Lineup) -> None:
+        if lineup.settings:
+            got = sorted(lineup.settings)
+            raise ValueError(f"lineup {lineup.name!r}: code_bounty takes no settings, got {got}")
         # A lineup must be able to use every attempt it asks for. Solo: one call
         # per attempt. Team: the plan, a coder call per attempt, and between
         # attempts a review, a decision and possibly a replan: 1 + n + 3(n - 1).

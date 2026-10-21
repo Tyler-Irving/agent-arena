@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS runs (
     finished_at TEXT,
     problem TEXT,  -- the --problem selector, NULL when the run covered every problem
     max_attempts INTEGER,  -- the lineup's attempt limit for this run
-    interrupted INTEGER  -- 1 if stopped before finishing: Ctrl-C/SIGTERM, or an error aborted it
+    interrupted INTEGER,  -- 1 if stopped before finishing: Ctrl-C/SIGTERM, or an error aborted it
+    settings TEXT  -- the lineup's plugin settings as JSON, NULL if it has none
 );
 
 CREATE TABLE IF NOT EXISTS calls (
@@ -68,6 +69,7 @@ ADDED_COLUMNS = [
     ("runs", "max_attempts", "INTEGER"),
     ("results", "score", "REAL"),
     ("results", "metrics", "TEXT"),
+    ("runs", "settings", "TEXT"),
 ]
 
 
@@ -92,11 +94,18 @@ class RunLog:
         self.db.commit()
 
     def start_run(
-        self, lineup: str, plugin: str, problem: str | None = None, max_attempts: int | None = None
+        self,
+        lineup: str,
+        plugin: str,
+        problem: str | None = None,
+        max_attempts: int | None = None,
+        settings: dict[str, Any] | None = None,
     ) -> int:
+        settings_json = json.dumps(settings, sort_keys=True) if settings else None
         cur = self.db.execute(
-            "INSERT INTO runs (lineup, plugin, started_at, problem, max_attempts) VALUES (?, ?, ?, ?, ?)",
-            (lineup, plugin, utc_now(), problem, max_attempts),
+            "INSERT INTO runs (lineup, plugin, started_at, problem, max_attempts, settings)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (lineup, plugin, utc_now(), problem, max_attempts, settings_json),
         )
         self.db.commit()
         assert cur.lastrowid is not None

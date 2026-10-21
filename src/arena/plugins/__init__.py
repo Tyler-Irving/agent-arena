@@ -4,8 +4,9 @@ from typing import Any
 
 from arena.core.plugin import Plugin
 from arena.plugins.code_bounty.plugin import PLUGIN as CODE_BOUNTY
+from arena.plugins.mafia.plugin import PLUGIN as MAFIA
 
-PLUGINS: dict[str, Plugin[Any]] = {p.name: p for p in [CODE_BOUNTY]}
+PLUGINS: dict[str, Plugin[Any]] = {p.name: p for p in [CODE_BOUNTY, MAFIA]}
 DEFAULT_PLUGIN = CODE_BOUNTY.name  # for lineups that don't name a plugin
 
 

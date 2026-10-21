@@ -57,3 +57,44 @@ all-local-gptoss:
     planner: ollama/gpt-oss:20b
     coder: ollama/gpt-oss:20b
     reviewer: ollama/gpt-oss:20b
+
+# --- mafia ----------------------------------------------------------------
+# plugin: mafia. One task is a whole game; score 1.0 = town won. settings.players
+# is 5-7 (default 7). At most one ollama model per lineup (one fits in VRAM).
+
+mafia-haiku:
+  plugin: mafia
+  mode: game
+  roles:
+    narrator: anthropic/claude-haiku-5-5
+    mafia: anthropic/claude-haiku-5-5
+    detective: anthropic/claude-haiku-5-5
+    villager: anthropic/claude-haiku-5-5
+
+mafia-gptoss:
+  plugin: mafia
+  mode: game
+  roles:
+    narrator: ollama/gpt-oss:20b
+    mafia: ollama/gpt-oss:20b
+    detective: ollama/gpt-oss:20b
+    villager: ollama/gpt-oss:20b
+
+# Does a stronger model deceive better, or detect better? Same narrator in both.
+mafia-sonnet-vs-haiku:
+  plugin: mafia
+  mode: game
+  roles:
+    narrator: anthropic/claude-haiku-5-5
+    mafia: anthropic/claude-sonnet-5-5
+    detective: anthropic/claude-haiku-5-5
+    villager: anthropic/claude-haiku-5-5
+
+mafia-haiku-vs-sonnet:
+  plugin: mafia
+  mode: game
+  roles:
+    narrator: anthropic/claude-haiku-5-5
+    mafia: anthropic/claude-haiku-5-5
+    detective: anthropic/claude-sonnet-5-5
+    villager: anthropic/claude-sonnet-5-5

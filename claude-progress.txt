@@ -138,21 +138,33 @@
   tests/test_mafia_loop.py (15): town win (29 calls), mafia win (36), unusable replies still end, provider
   error unscored, visibility (narrator text, blind votes, partner/check privacy), rotation, identical deals.
   Mutation-checked: planting a narrator leak, mid-vote reveal, or no rotation each fails a test.
-- Next: step 4, mafia lineups in config/lineups.yaml, docs (CLAUDE.md Mafia section incl. blind votes),
-  then one mafia-gptoss game (local) and one mafia-haiku game (~$0.05). Sonnet games need the user's OK.
+- Step 4 DONE: lineups mafia-haiku, mafia-gptoss, mafia-sonnet-vs-haiku, mafia-haiku-vs-sonnet; CLAUDE.md
+  Mafia section (rules incl. blind votes, visibility, call bound) + schema; README Mafia section.
+- First real games, both game-01 (same deal: Blake + Emery mafia, Avery detective):
+  - run 27 mafia-gptoss: MAFIA WON on night 2, 21 calls, 188 s, $0. Detective checked Finley (not mafia)
+    and claimed on day 1; town split its votes and eliminated villager Gray; Avery killed night 2.
+  - run 28 mafia-haiku: TOWN WON on day 2, 29 calls, 118 s, $0.0100. Mafia agreed on Casey; Avery checked
+    Blake, claimed detective on day 1, town voted Blake out (Emery posed as villager and attacked the
+    claim); day 2 town read Emery's defence of Blake and voted Emery out. Town votes on mafia 6/7.
+  - Zero invalid replies in both. Max prompt 2,283 input tokens (Haiku), well inside 16k local context.
+  - Leak audit over every stored prompt: no player prompt held narrator-only text, partner info outside
+    mafia, or check results outside the detective. (gpt-oss's night-1 narration repeated the fact line
+    verbatim, which first looked like a leak; it isn't, the fact line is meant to be public.)
+- Next: step 5, /code-review + /security-review, fix, PR. Sonnet games need the user's OK (~$0.45 each est.).
 
 ## Mafia gaps (core assumptions Mafia would still hit; not fixed yet)
-1. What a score means: one Mafia lineup plays both sides, so define it (e.g. 1.0 = town won). The
+1. PARTLY: score = 1.0 if town won (decided). Still open: one Mafia lineup plays both sides, so define it (e.g. 1.0 = town won). The
    scoreboard groups by lineup only; Mafia wants win rate per side/model, i.e. its own report. The
    limit/attempts columns, the "passed" wording and the footer are bounty-shaped.
-2. max_attempts on Lineup/runs is a retry budget; Mafia ignores it but "limit 3" still shows.
+2. OPEN: max_attempts on Lineup/runs is a retry budget; Mafia ignores it but "limit 3" still shows
+   (also in the run header: "max 3 attempts").
 3. DONE on feat/mafia (Lineup.settings + extra="forbid"). Was: no plugin-specific lineup settings (players: 7, seed). extra="forbid" now rejects unknown
    keys instead of silently dropping them; a `settings:` field checked by validate_lineup is still needed.
 4. One model per role: several villagers share one RoleConfig (fine unless per-player models are wanted).
-5. max_calls is a per-plugin constant; if calls grow with player count, make it a function of the lineup.
-6. CLI wording: "N problem(s)", "max N attempts", "X/Y passed", --problem, "no problems match".
-7. VRAM: concurrent night actions across different local models make Ollama swap; the plugin must run
-   them one at a time (core can't enforce it).
+5. CLOSED: max_calls stays a constant; worst_case_calls proves 45 <= 60 for the largest legal game.
+6. OPEN: CLI wording: "N problem(s)", "max N attempts", "X/Y passed", --problem, "no problems match",
+   and the empty-scoreboard hint suggests haiku-solo for every plugin.
+7. ENFORCED: Mafia's calls are sequential and validate_lineup allows at most one ollama model.
 8. Naming: problem_id kwargs/columns mean task id (cosmetic).
 Checked OK: core makes no model calls itself (no one-solver assumption), no grader in core, roles and
 limits come from the plugin, Session.call's role_name is free text (log "villager-2"), calls.messages

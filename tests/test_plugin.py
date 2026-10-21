@@ -7,12 +7,13 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 from pydantic import BaseModel, ValidationError
 
 from arena import cli
 from arena.core import orchestrator
 from arena.core import plugin as core_plugin
-from arena.core.lineup import Lineup, get_lineup, load_lineups
+from arena.core.lineup import LINEUPS_FILE, Lineup, get_lineup, load_lineups
 from arena.core.plugin import Outcome, Session
 from arena.core.runlog import RunLog
 from arena.core.taskboard import SqliteTaskBoard
@@ -115,8 +116,12 @@ def test_lineup_with_unknown_plugin_is_rejected(tmp_path: Path) -> None:
 
 
 def test_lineup_without_plugin_defaults_to_code_bounty() -> None:
+    raw = yaml.safe_load(LINEUPS_FILE.read_text())
     lineups = load_lineups(PLUGINS, DEFAULT_PLUGIN)
-    assert {lineup.plugin for lineup in lineups.values()} == {"code_bounty"}
+    assert {name: lineup.plugin for name, lineup in lineups.items()} == {
+        name: cfg.get("plugin", "code_bounty") for name, cfg in raw.items()
+    }
+    assert lineups["haiku-solo"].plugin == "code_bounty" and lineups["mafia-haiku"].plugin == "mafia"
 
 
 def test_lineup_checked_against_its_plugin(tmp_path: Path) -> None:

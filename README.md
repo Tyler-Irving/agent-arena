@@ -105,6 +105,24 @@ Each problem is a folder in [`problems/`](problems):
 | 007 integer calculator | medium-hard |
 | 009 next cron run, 010 settle debts | hard |
 
+## Mafia
+
+The second plugin: 5-7 agents play Mafia (2 mafia, a detective and villagers by default), and
+a game's score is 1.0 if town won. Code applies the rules; models only choose kills, checks,
+speeches and votes. Each agent sees only its own view: its role, its private knowledge (mafia
+partner, detective results), and a shared record of code-written facts and speeches. Votes are
+blind until everyone has voted, and the narrator's flavor text never reaches the players.
+Every game is seeded by its id, so `game-03` deals the same seats and roles in every lineup.
+
+```bash
+uv run arena run --lineup mafia-haiku --problem 03   # one game
+uv run arena run --lineup mafia-gptoss               # all ten games, locally
+uv run arena scoreboard --plugin mafia               # "pass" is the town win rate
+```
+
+Lineups such as `mafia-sonnet-vs-haiku` put a different model on each side. Every event goes to
+the `mafia_events` table, and every prompt to `calls`, so a game can be replayed per player.
+
 ## Safety
 
 Model-written code never runs on the host. Each grade runs in a fresh container with
@@ -126,6 +144,7 @@ src/arena/
   core/lineup.py             lineup config loading, checked against each lineup's plugin
   plugins/__init__.py        the plugin registry: a plain dict of name -> plugin
   plugins/code_bounty/       solo/team loops (loop.py), prompts (roles.py), grader, problems
+  plugins/mafia/             game rules (game.py), game loop (loop.py), prompts (roles.py)
 docker/arena-grader/         grading sandbox image
 config/lineups.yaml          lineups
 problems/                    coding problems
@@ -155,6 +174,7 @@ uv run ruff check src tests && uv run ruff format --check src tests && uv run py
 | 5. Team mode | ✅ | `step-5-team` |
 | 6. Ten problems, mostly medium or harder | ✅ | `step-6-problems` |
 | 7. Plugin interface, making room for a second task type | ✅ | `step-7-plugins` |
+| 8. Mafia plugin | ✅ | `step-8-mafia` |
 
 The first three problems are warm-ups. Problems 004-010 are medium to hard, and
 each one has edge cases that its prompt states but that are easy to miss

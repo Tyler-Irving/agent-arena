@@ -7,31 +7,40 @@ import pytest
 from pydantic import ValidationError
 
 from arena.core import orchestrator
-from arena.core.lineup import Lineup, load_lineups
+from arena.core import plugin as core_plugin
+from arena.core.lineup import Lineup, check_lineup, load_lineups
 from arena.core.runlog import RunLog
 from arena.core.taskboard import SqliteTaskBoard
 from arena.models.router import ModelResponse
+from arena.plugins import DEFAULT_PLUGIN, PLUGINS
+from arena.plugins.code_bounty import loop
 from arena.plugins.code_bounty.grader import GraderError, GradeResult, grade
+from arena.plugins.code_bounty.plugin import PLUGIN
 from arena.plugins.code_bounty.problems import PROBLEMS_DIR, extract_code, load_problems
 
 # --- lineups ---------------------------------------------------------------
 
 
+def _lineup(cfg: dict) -> Lineup:
+    """A code_bounty lineup, checked against the plugin the way load_lineups does."""
+    lineup = Lineup.model_validate({"plugin": "code_bounty", **cfg})
+    check_lineup(lineup, PLUGIN)
+    return lineup
+
+
 def test_role_shorthand_and_think() -> None:
-    lineup = Lineup.model_validate(
+    lineup = _lineup(
         {"name": "x", "mode": "solo", "roles": {"solo": {"model": "ollama/qwen3.6:35b-a3b", "think": False}}}
     )
     assert lineup.roles["solo"].think is False
-    lineup = Lineup.model_validate(
-        {"name": "x", "mode": "solo", "roles": {"solo": "ollama/qwen2.5-coder:14b"}}
-    )
+    lineup = _lineup({"name": "x", "mode": "solo", "roles": {"solo": "ollama/qwen2.5-coder:14b"}})
     assert lineup.roles["solo"].model == "ollama/qwen2.5-coder:14b"
     assert lineup.roles["solo"].think is None
 
 
 def test_missing_roles_rejected() -> None:
-    with pytest.raises(ValidationError, match="missing roles"):
-        Lineup.model_validate({"name": "x", "mode": "team", "roles": {"coder": "ollama/x"}})
+    with pytest.raises(ValueError, match="missing roles"):
+        _lineup({"name": "x", "mode": "team", "roles": {"coder": "ollama/x"}})
 
 
 def test_think_false_rejected_where_thinking_cannot_be_disabled() -> None:
@@ -39,13 +48,13 @@ def test_think_false_rejected_where_thinking_cannot_be_disabled() -> None:
         return {"name": "x", "mode": "solo", "roles": {"solo": {"model": model, "think": False}}}
 
     with pytest.raises(ValidationError, match="cannot turn thinking off"):
-        Lineup.model_validate(no_think("anthropic/claude-opus-5-5"))
+        _lineup(no_think("anthropic/claude-opus-5-5"))
     for model in ("anthropic/claude-sonnet-5-5", "anthropic/claude-haiku-5-5", "ollama/gpt-oss:20b"):
-        Lineup.model_validate(no_think(model))
+        _lineup(no_think(model))
 
 
 def test_config_lineups_load() -> None:
-    lineups = load_lineups()
+    lineups = load_lineups(PLUGINS, DEFAULT_PLUGIN)
     assert lineups["opus-solo"].roles["solo"].model == "anthropic/claude-opus-5-5"
     assert lineups["sonnet-orch-qwen14b"].mode == "team"
     assert lineups["sonnet-orch-qwen14b"].max_attempts == 3
@@ -54,23 +63,23 @@ def test_config_lineups_load() -> None:
 
 def test_max_attempts_must_be_positive() -> None:
     with pytest.raises(ValidationError, match="max_attempts"):
-        Lineup.model_validate({"name": "x", "mode": "solo", "roles": {"solo": "ollama/x"}, "max_attempts": 0})
+        _lineup({"name": "x", "mode": "solo", "roles": {"solo": "ollama/x"}, "max_attempts": 0})
 
 
 def test_max_attempts_must_fit_the_call_limit() -> None:
     team = {role: "ollama/x" for role in ("orchestrator", "planner", "coder", "reviewer")}
     # team worst case is 4n - 2 calls: 5 attempts need 18, 6 need 22
-    Lineup.model_validate({"name": "x", "mode": "team", "roles": team, "max_attempts": 5})
-    with pytest.raises(ValidationError, match="22 calls"):
-        Lineup.model_validate({"name": "x", "mode": "team", "roles": team, "max_attempts": 6})
+    _lineup({"name": "x", "mode": "team", "roles": team, "max_attempts": 5})
+    with pytest.raises(ValueError, match="22 calls"):
+        _lineup({"name": "x", "mode": "team", "roles": team, "max_attempts": 6})
     solo = {"name": "x", "mode": "solo", "roles": {"solo": "ollama/x"}}
-    Lineup.model_validate({**solo, "max_attempts": 20})
-    with pytest.raises(ValidationError, match="21 calls"):
-        Lineup.model_validate({**solo, "max_attempts": 21})
+    _lineup({**solo, "max_attempts": 20})
+    with pytest.raises(ValueError, match="21 calls"):
+        _lineup({**solo, "max_attempts": 21})
 
 
 def test_5att_lineup_matches_its_base() -> None:
-    lineups = load_lineups()
+    lineups = load_lineups(PLUGINS, DEFAULT_PLUGIN)
     assert lineups["sonnet-orch-qwen14b-5att"].roles == lineups["sonnet-orch-qwen14b"].roles
 
 
@@ -170,15 +179,14 @@ def _run_solo(
     async def fake_grade(code, problem_dir):
         return _grade(grades.pop(0))
 
-    monkeypatch.setattr(orchestrator, "complete", fake_complete)
-    monkeypatch.setattr(orchestrator, "grade", fake_grade)
+    monkeypatch.setattr(core_plugin, "complete", fake_complete)
+    monkeypatch.setattr(loop, "grade", fake_grade)
     log = RunLog(tmp_path / "arena.db")
-    lineup = Lineup.model_validate(
+    lineup = _lineup(
         {"name": "fake-solo", "mode": "solo", "roles": {"solo": "fake/model"}, "max_attempts": max_attempts}
     )
-    run_id, outcomes = asyncio.run(
-        orchestrator.run_lineup(lineup, load_problems("001"), SqliteTaskBoard(tmp_path / "arena.db"), log)
-    )
+    board = SqliteTaskBoard(tmp_path / "arena.db")
+    run_id, outcomes = asyncio.run(orchestrator.run_lineup(PLUGIN, lineup, load_problems("001"), board, log))
     return log, run_id, outcomes[0], seen_messages
 
 
@@ -186,7 +194,7 @@ def test_solo_retries_with_feedback_then_passes(monkeypatch, tmp_path) -> None:
     replies = [_reply("```python\nbad\n```"), _reply("```python\ngood\n```")]
     log, run_id, outcome, seen = _run_solo(monkeypatch, tmp_path, replies, [False, True])
 
-    assert (outcome.passed, outcome.attempts, outcome.calls) == (True, 2, 2)
+    assert (outcome.score, outcome.attempts, outcome.calls) == (1.0, 2, 2)
     assert outcome.cost_usd == pytest.approx(0.02)
     # second call sees the first reply and the test output
     assert seen[1][1] == {"role": "assistant", "content": "```python\nbad\n```"}
@@ -202,7 +210,7 @@ def test_solo_gives_up_after_max_attempts(monkeypatch, tmp_path) -> None:
     replies = [_reply("no code"), _reply("```python\nbad\n```"), _reply("```python\nbad\n```")]
     _, _, outcome, seen = _run_solo(monkeypatch, tmp_path, replies, [False, False])
 
-    assert (outcome.passed, outcome.attempts, outcome.calls) == (False, 3, 3)
+    assert (outcome.score, outcome.attempts, outcome.calls) == (0.0, 3, 3)
     assert "did not contain" in seen[1][2]["content"]
 
 
@@ -211,7 +219,7 @@ def test_solo_uses_the_lineup_attempt_limit(monkeypatch, tmp_path, limit: int) -
     replies = [_reply("```python\nbad\n```") for _ in range(limit)]
     log, _, outcome, _ = _run_solo(monkeypatch, tmp_path, replies, [False] * limit, max_attempts=limit)
 
-    assert (outcome.passed, outcome.attempts, outcome.calls) == (False, limit, limit)
+    assert (outcome.score, outcome.attempts, outcome.calls) == (0.0, limit, limit)
     assert log.db.execute("SELECT max_attempts FROM runs").fetchone()[0] == limit
 
 
@@ -224,7 +232,7 @@ def test_solo_unknown_price_makes_cost_unknown(monkeypatch, tmp_path) -> None:
 def test_solo_model_error_fails_problem(monkeypatch, tmp_path) -> None:
     log, _, outcome, _ = _run_solo(monkeypatch, tmp_path, [RuntimeError("boom")], [])
 
-    assert not outcome.passed and outcome.error == "RuntimeError: boom"
+    assert outcome.score == 0.0 and outcome.error == "RuntimeError: boom"
     assert outcome.attempts == 0
     reason = SqliteTaskBoard(tmp_path / "arena.db").db.execute("SELECT reason FROM tasks").fetchone()[0]
     assert reason == "RuntimeError: boom"
@@ -239,14 +247,15 @@ def test_grader_error_marks_task_failed_and_aborts(monkeypatch, tmp_path) -> Non
     async def broken_grade(code, problem_dir):
         raise GraderError("docker went away")
 
-    monkeypatch.setattr(orchestrator, "complete", fake_complete)
-    monkeypatch.setattr(orchestrator, "grade", broken_grade)
+    monkeypatch.setattr(core_plugin, "complete", fake_complete)
+    monkeypatch.setattr(loop, "grade", broken_grade)
     log = RunLog(tmp_path / "arena.db")
-    lineup = Lineup.model_validate({"name": "fake-solo", "mode": "solo", "roles": {"solo": "fake/model"}})
+    lineup = _lineup({"name": "fake-solo", "mode": "solo", "roles": {"solo": "fake/model"}})
     board = SqliteTaskBoard(tmp_path / "arena.db")
     with pytest.raises(GraderError):
-        asyncio.run(orchestrator.run_lineup(lineup, load_problems("001"), board, log))
+        asyncio.run(orchestrator.run_lineup(PLUGIN, lineup, load_problems("001"), board, log))
 
     status, reason = board.db.execute("SELECT status, reason FROM tasks").fetchone()
     assert (status, reason) == ("failed", "grader error: docker went away")
     assert log.db.execute("SELECT finished_at FROM runs").fetchone()[0] is not None
+    assert log.db.execute("SELECT interrupted FROM runs").fetchone()[0] == 1  # cut short, not a full run

@@ -1,14 +1,16 @@
-# claude-progress.txt — session state (updated 2026-10-19)
+# claude-progress.txt — session state (updated 2026-10-21)
 
 ## Start here
 - Build order: steps 1-6 DONE and merged to main (tags step-1-router .. step-6-problems).
+  Step 7 (plugin interface) is on branch refactor/plugin-interface, PR open; user tags step-7-plugins
+  after merge. Next: the Mafia plugin (see "Mafia gaps" below).
 - GitHub: https://github.com/Tyler-Irving/agent-arena (private). main has steps 1-6, merged
   through one PR per step; build steps are tagged step-1-router .. step-6-problems.
 - Run /code-review before any PR.
 - Docker Desktop must be running. In WSL, /usr/bin/docker is a stub until it starts.
   Start from WSL: cmd.exe /c start "" "C:\Program Files\Docker\Docker\Docker Desktop.exe"
 - Verify the state before changing anything:
-    uv run ruff check src tests && uv run pyright src tests && uv run pytest -q   # 108 passing
+    uv run ruff check src tests && uv run ruff format --check src tests && uv run pyright src tests && uv run pytest -q   # 121 passing
     uv run arena scoreboard
 
 ## What exists
@@ -16,23 +18,32 @@
   (Ollama `reasoning` field or inline <think> tags), every call goes to the run log,
   and ModelResponse.cost_usd is set.
 - models/pricing.py: Anthropic prices as of 2026-10-16, Haiku long-prompt tier, ollama = 0.
-- core/runlog.py: SQLite data/arena.db with runs, calls (full prompt/response/reasoning/error),
-  results, and attempts (code + grade for each attempt).
-- core/lineup.py + config/lineups.yaml: a role is a model string or {model, think}.
-  Team lineups validate orchestrator/planner/coder/reviewer.
+- core/plugin.py: the Plugin protocol (name, modes -> required roles, max_calls, schema, load_tasks,
+  validate_lineup, run_task), Session (call limit, cost, run log), Outcome (score 0-1, attempts,
+  verdict, fail_reason, error, stop_reason, metrics), PluginError, ModelCallFailed, CallLimitReached.
+  core never imports a plugin; plugins/__init__.py is a plain dict PLUGINS + DEFAULT_PLUGIN.
+- core/runlog.py: SQLite data/arena.db with runs, calls (full prompt/response/reasoning/error) and
+  results (+ score, metrics JSON). code_bounty's schema adds attempts (code + grade per attempt).
+- core/lineup.py + config/lineups.yaml: optional plugin: (default code_bounty), mode, roles; a role
+  is a model string or {model, think}. extra="forbid" on Lineup and RoleConfig. load_lineups(PLUGINS,
+  DEFAULT_PLUGIN) checks mode/roles against the plugin, then plugin.validate_lineup.
 - core/taskboard.py: async TaskBoard Protocol plus a SQLite implementation (atomic claim).
-- core/orchestrator.py: run_lineup() -> solve_solo() | solve_team(). max_attempts per lineup (default 3), MAX_CALLS=20,
-  enforced by Session (counts calls + cost, grades and logs attempts). Team loop: planner ->
+- core/orchestrator.py: run_lineup(plugin, lineup, tasks, ...) -> plugin.run_task per task. Board,
+  results, Ctrl-C; PluginError aborts the run; an escaped ModelCallFailed = unscored error outcome.
+- plugins/code_bounty/plugin.py + loop.py: run_task -> solve_solo() | solve_team(). max_attempts per
+  lineup (default 3), CodeBounty.max_calls=20 enforced by Session; grade_reply grades and logs
+  attempts. Team loop: planner ->
   coder -> grader; on failure reviewer -> orchestrator (DECISION: RETRY|REPLAN|GIVE_UP,
   unparseable = retry). Every team call is a fresh 1-message conversation (current plan +
   latest attempt only). Replan restarts the coder without the old code. Reviewer and
   orchestrator are skipped after the last attempt and after a reply with no code.
   Worst case 10 calls/problem. Outcome.gave_up marks an orchestrator give-up.
-- core/scoreboard.py: every result in every code_bounty run is one trial.
+- core/scoreboard.py: every result in every run of one plugin (--plugin, default code_bounty) is one
+  trial; score = COALESCE(results.score, results.passed), so pre-plugin rows count the same.
 - plugins/code_bounty: grader.py (Docker sandbox, GraderError for infra failures),
   roles.py (solo + team prompts, parse_decision), problems.py (loading + extract_code).
 - problems 001-010, each with a reference.py that tests/test_solo.py grades.
-- CLI: arena smoke | run --lineup X [--problem 001] [--repeat N] | scoreboard [--since RUN_ID]
+- CLI: arena smoke | run --lineup X [--problem 001] [--repeat N] | scoreboard [--since RUN_ID] [--plugin P]
   The scoreboard's "per run" column is the lowest-highest single-run pass rate per lineup, over
   full runs only (runs.problem NULL, not interrupted, finished). runs.problem records --problem.
 
@@ -88,6 +99,42 @@
 - REPLAN share is the same at both limits (~36% of decisions); GIVE_UP never chosen
 - Ideas, not done: replan sooner (after one failed retry), or make the coder start fresh on
   RETRY too; 009 (cron) stays hard for qwen14b whatever the plan
+
+## Plugin interface (branch refactor/plugin-interface, 2026-10-21)
+- code_bounty is one plugin behind core/plugin.py; `grep -r code_bounty src/arena/core` is empty and
+  tests/test_plugin.py checks that importing core loads no arena.plugins module. A fake "duel" plugin
+  runs through run_lineup in tests. Prompts, loops, limits and printed output unchanged (a scripted fake
+  solo + team run diffed byte-identical against main, including tasks/results/attempts rows).
+- DB: results.score REAL + results.metrics TEXT via ADDED_COLUMNS. No renames, no backfill.
+  `arena scoreboard` (and --since 12/17/19) on runs 12-25 matched the pre-refactor output exactly.
+  Backup of the pre-refactor DB: data/arena-before-step7.db.
+- Run 26: haiku-solo --problem 001, PASS, $0.0001 (the post-refactor real check). results row has
+  score 1.0, passed 1, metrics {}.
+- Departures from the original sketch (all agreed in plan review): attempts is a generic Outcome field
+  (results.attempts is NOT NULL); passed = score == 1.0; Outcome carries verdict + fail_reason so core
+  needn't know "PASS"/"tests failing"; the attempts table moved to code_bounty via Plugin.schema;
+  --plugin is on scoreboard only (a lineup names its plugin, so run takes it from there).
+- /code-review fixes: a run aborted by any error (GraderError included) is now interrupted=1 and its
+  claimed task is failed with the error, not left "running" (both were also true on main; no real run
+  was ever aborted, so the scoreboard is unchanged); run_lineup checks mode + roles of directly built
+  lineups (check_roles); `arena run` prints invalid lineup config errors and exits 2, no traceback.
+
+## Mafia gaps (core assumptions Mafia would still hit; not fixed yet)
+1. What a score means: one Mafia lineup plays both sides, so define it (e.g. 1.0 = town won). The
+   scoreboard groups by lineup only; Mafia wants win rate per side/model, i.e. its own report. The
+   limit/attempts columns, the "passed" wording and the footer are bounty-shaped.
+2. max_attempts on Lineup/runs is a retry budget; Mafia ignores it but "limit 3" still shows.
+3. HALF DONE: no plugin-specific lineup settings (players: 7, seed). extra="forbid" now rejects unknown
+   keys instead of silently dropping them; a `settings:` field checked by validate_lineup is still needed.
+4. One model per role: several villagers share one RoleConfig (fine unless per-player models are wanted).
+5. max_calls is a per-plugin constant; if calls grow with player count, make it a function of the lineup.
+6. CLI wording: "N problem(s)", "max N attempts", "X/Y passed", --problem, "no problems match".
+7. VRAM: concurrent night actions across different local models make Ollama swap; the plugin must run
+   them one at a time (core can't enforce it).
+8. Naming: problem_id kwargs/columns mean task id (cosmetic).
+Checked OK: core makes no model calls itself (no one-solver assumption), no grader in core, roles and
+limits come from the plugin, Session.call's role_name is free text (log "villager-2"), calls.messages
+holds each agent's own view so a game replays per agent.
 
 ## Open decisions / known issues
 - Local-model wall time includes the cold load on a run's first problem (gpt-oss ~25s).

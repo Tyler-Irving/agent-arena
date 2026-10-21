@@ -12,11 +12,14 @@ import pytest
 
 from arena import cli
 from arena.core import orchestrator
+from arena.core import plugin as core_plugin
 from arena.core.lineup import Lineup
 from arena.core.runlog import RunLog
 from arena.core.taskboard import SqliteTaskBoard
 from arena.models.router import ModelResponse
+from arena.plugins.code_bounty import loop
 from arena.plugins.code_bounty.grader import GraderError, GradeResult
+from arena.plugins.code_bounty.plugin import PLUGIN
 from arena.plugins.code_bounty.problems import load_problems
 
 
@@ -45,8 +48,8 @@ def test_repeat_makes_one_run_each(monkeypatch, tmp_path, capsys) -> None:
         return _pass()
 
     log = RunLog(tmp_path / "arena.db")
-    monkeypatch.setattr(orchestrator, "complete", fake_complete)
-    monkeypatch.setattr(orchestrator, "grade", fake_grade)
+    monkeypatch.setattr(core_plugin, "complete", fake_complete)
+    monkeypatch.setattr(loop, "grade", fake_grade)
     monkeypatch.setattr(cli, "get_runlog", lambda: log)
     monkeypatch.setattr(cli, "SqliteTaskBoard", lambda: SqliteTaskBoard(tmp_path / "arena.db"))
 
@@ -74,8 +77,8 @@ def test_repeat_still_summarizes_finished_runs_when_grader_breaks(monkeypatch, t
         return grade
 
     log = RunLog(tmp_path / "arena.db")
-    monkeypatch.setattr(orchestrator, "complete", fake_complete)
-    monkeypatch.setattr(orchestrator, "grade", fake_grade)
+    monkeypatch.setattr(core_plugin, "complete", fake_complete)
+    monkeypatch.setattr(loop, "grade", fake_grade)
     monkeypatch.setattr(cli, "get_runlog", lambda: log)
     monkeypatch.setattr(cli, "SqliteTaskBoard", lambda: SqliteTaskBoard(tmp_path / "arena.db"))
 
@@ -97,9 +100,11 @@ def test_cancelled_run_marks_task_interrupted(monkeypatch, tmp_path) -> None:
             calling.set()
             await asyncio.sleep(60)
 
-        monkeypatch.setattr(orchestrator, "complete", hang)
-        lineup = Lineup.model_validate({"name": "fake", "mode": "solo", "roles": {"solo": "fake/model"}})
-        run = asyncio.create_task(orchestrator.run_lineup(lineup, load_problems()[:2], board, log))
+        monkeypatch.setattr(core_plugin, "complete", hang)
+        lineup = Lineup.model_validate(
+            {"name": "fake", "plugin": "code_bounty", "mode": "solo", "roles": {"solo": "fake/model"}}
+        )
+        run = asyncio.create_task(orchestrator.run_lineup(PLUGIN, lineup, load_problems()[:2], board, log))
         await calling.wait()
         run.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -126,10 +131,11 @@ HANGING_RUN = """
 import asyncio, sys
 from pathlib import Path
 from arena import cli
-from arena.core import orchestrator
+from arena.core import plugin as core_plugin
 from arena.core.runlog import RunLog
 from arena.core.taskboard import SqliteTaskBoard
 from arena.models.router import ModelResponse
+from arena.plugins.code_bounty import loop
 
 db, mode = Path(sys.argv[1]), sys.argv[2]
 
@@ -150,10 +156,10 @@ async def slow_cleanup_grade(code, problem_dir):
         print("cleaned up", flush=True)
 
 if mode == "model":
-    orchestrator.complete = hang
+    core_plugin.complete = hang
 else:
-    orchestrator.complete = reply
-    orchestrator.grade = slow_cleanup_grade
+    core_plugin.complete = reply
+    loop.grade = slow_cleanup_grade
 cli.get_runlog = lambda: RunLog(db)
 cli.SqliteTaskBoard = lambda: SqliteTaskBoard(db)
 sys.argv = ["arena", "run", "--lineup", "haiku-solo", "--problem", "001"]

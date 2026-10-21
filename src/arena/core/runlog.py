@@ -1,13 +1,14 @@
-"""SQLite run log: every model call and every problem result.
+"""SQLite run log: every model call and every task result.
 
 The calls table keeps the full prompt, response and reasoning so a run can be
-read back later like a transcript.
+read back later like a transcript. Plugins add their own tables (Plugin.schema).
 """
 
 import json
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 DEFAULT_DB = Path("data/arena.db")
 
@@ -20,7 +21,7 @@ CREATE TABLE IF NOT EXISTS runs (
     finished_at TEXT,
     problem TEXT,  -- the --problem selector, NULL when the run covered every problem
     max_attempts INTEGER,  -- the lineup's attempt limit for this run
-    interrupted INTEGER  -- 1 if stopped by Ctrl-C/SIGTERM before finishing
+    interrupted INTEGER  -- 1 if stopped before finishing: Ctrl-C/SIGTERM, or an error aborted it
 );
 
 CREATE TABLE IF NOT EXISTS calls (
@@ -52,23 +53,9 @@ CREATE TABLE IF NOT EXISTS results (
     attempts INTEGER NOT NULL,
     total_calls INTEGER NOT NULL,
     total_cost_usd REAL,
-    wall_time_ms INTEGER NOT NULL
-);
-
--- One row per graded attempt, so the final failing grade (which no later
--- call sees) is still in the transcript. code is NULL if the reply had none.
-CREATE TABLE IF NOT EXISTS attempts (
-    id INTEGER PRIMARY KEY,
-    run_id INTEGER NOT NULL REFERENCES runs(id),
-    problem_id TEXT NOT NULL,
-    attempt INTEGER NOT NULL,
-    code TEXT,
-    passed INTEGER NOT NULL,
-    tests_passed INTEGER,
-    tests_total INTEGER,
-    timed_out INTEGER,
-    output TEXT,
-    created_at TEXT NOT NULL
+    wall_time_ms INTEGER NOT NULL,
+    score REAL,  -- 0.0-1.0; NULL in rows logged before plugins, where passed is the score
+    metrics TEXT  -- JSON, whatever the plugin reports beyond the score
 );
 """
 
@@ -79,6 +66,8 @@ ADDED_COLUMNS = [
     ("runs", "problem", "TEXT"),
     ("runs", "interrupted", "INTEGER"),
     ("runs", "max_attempts", "INTEGER"),
+    ("results", "score", "REAL"),
+    ("results", "metrics", "TEXT"),
 ]
 
 
@@ -169,54 +158,34 @@ class RunLog:
         assert cur.lastrowid is not None
         return cur.lastrowid
 
-    def log_attempt(
-        self,
-        *,
-        run_id: int,
-        problem_id: str,
-        attempt: int,
-        code: str | None,
-        passed: bool,
-        tests_passed: int | None = None,
-        tests_total: int | None = None,
-        timed_out: bool | None = None,
-        output: str | None = None,
-    ) -> None:
-        self.db.execute(
-            """INSERT INTO attempts (run_id, problem_id, attempt, code, passed, tests_passed,
-                   tests_total, timed_out, output, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                run_id,
-                problem_id,
-                attempt,
-                code,
-                int(passed),
-                tests_passed,
-                tests_total,
-                None if timed_out is None else int(timed_out),
-                output,
-                utc_now(),
-            ),
-        )
-        self.db.commit()
-
     def log_result(
         self,
         *,
         run_id: int,
         problem_id: str,
-        passed: bool,
+        score: float,
         attempts: int,
         total_calls: int,
         total_cost_usd: float | None,
         wall_time_ms: int,
+        metrics: dict[str, Any] | None = None,
     ) -> None:
+        # passed and attempts predate plugins; passed means a full score.
         self.db.execute(
             """INSERT INTO results (run_id, problem_id, passed, attempts, total_calls,
-                   total_cost_usd, wall_time_ms)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (run_id, problem_id, int(passed), attempts, total_calls, total_cost_usd, wall_time_ms),
+                   total_cost_usd, wall_time_ms, score, metrics)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                run_id,
+                problem_id,
+                int(score == 1.0),
+                attempts,
+                total_calls,
+                total_cost_usd,
+                wall_time_ms,
+                score,
+                json.dumps(metrics or {}),
+            ),
         )
         self.db.commit()
 

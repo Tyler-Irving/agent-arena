@@ -15,6 +15,8 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from arena.core.plugin import PluginError
+
 IMAGE = "arena-grader"
 TIMEOUT_S = 30
 MAX_OUTPUT_CHARS = 4000
@@ -34,8 +36,10 @@ DOCKER_CMD_TIMEOUT_S = 10.0
 _SUMMARY_COUNT = re.compile(r"(\d+) (passed|failed|errors?)\b")
 
 
-class GraderError(RuntimeError):
+class GraderError(PluginError):
     """The sandbox itself failed (Docker missing, image not built, ...), not the solution."""
+
+    what = "grader"
 
 
 class _Stalled(Exception):

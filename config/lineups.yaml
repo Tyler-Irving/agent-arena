@@ -1,5 +1,6 @@
-# A lineup is a mode plus a model per role. A role is a model string, or
-# {model: ..., think: true|false} to force thinking on or off.
+# A lineup is a plugin (plugin: ..., default code_bounty), a mode, and a model
+# per role. A role is a model string, or {model: ..., think: true|false} to
+# force thinking on or off. Unknown keys are an error.
 # max_attempts (default 3) is the number of graded attempts per problem; it
 # must fit in the 20-call limit (team: at most 5).
 

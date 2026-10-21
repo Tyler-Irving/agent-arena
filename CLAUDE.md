@@ -1,6 +1,6 @@
 # Agent Arena
 
-A local orchestrator/worker multi-agent system for running tasks across different model lineups (local Ollama models and the Anthropic API) and comparing how they do. First plugin is the **code bounty board**: the orchestrator posts coding problems, workers solve them, a sandboxed test runner grades them.
+A local orchestrator/worker multi-agent system for running tasks across different model lineups (local Ollama models and the Anthropic API) and comparing how they do. Each kind of task is a **plugin**. Core runs the bookkeeping (runs, task board, call limit, cost, run log, Ctrl-C); a plugin owns its tasks and the loop of model calls for each one. The one plugin so far is the **code bounty board**: the orchestrator posts coding problems, workers solve them, a sandboxed test runner grades them. Mafia is planned next.
 
 The point of this project is learning how multi-agent systems behave, so keep the core small and readable. No agent frameworks (no LangChain, LangGraph, CrewAI). Write the loop ourselves.
 
@@ -19,18 +19,22 @@ src/arena/             # package (src layout; `arena` script -> arena.cli:main)
   models/
     router.py          # one interface over Anthropic + Ollama
     pricing.py         # per-model token prices, local = 0
-  core/
-    orchestrator.py    # the plan -> dispatch -> collect -> decide loop
+  core/                # never imports a plugin
+    plugin.py          # Plugin protocol, Session, Outcome, PluginError: the core <-> plugin contract
+    orchestrator.py    # run_lineup: run bookkeeping, task board, results, Ctrl-C/SIGTERM
     taskboard.py       # TaskBoard protocol + SQLite implementation
     runlog.py          # logs every model call and result to SQLite
-    scoreboard.py      # per-lineup aggregates over all runs for `arena scoreboard`
-    lineup.py          # loads lineup configs, maps role -> model
+    scoreboard.py      # per-lineup aggregates over one plugin's runs for `arena scoreboard`
+    lineup.py          # loads lineup configs, checks them against their plugin
   plugins/
+    __init__.py        # PLUGINS: plain dict of name -> plugin, DEFAULT_PLUGIN, get_plugin
     code_bounty/
+      plugin.py        # CodeBounty: modes/roles, 20-call limit, lineup rules, run_task -> solo | team
+      loop.py          # the solo and team loops, grading a reply, the attempts table
       roles.py         # system prompts for orchestrator, solo, planner, coder, reviewer
       grader.py        # runs tests in Docker, returns pass/fail + output
       problems.py      # loads problems/, extracts code from model replies
-  cli.py               # entry point
+  cli.py               # entry point; the only place that wires core to the plugin registry
 tests/                 # pytest unit tests; grader tests skip if Docker/image missing
 docker/
   arena-grader/
@@ -79,9 +83,38 @@ Anthropic prices in `pricing.py` are copied from the Anthropic pricing page and 
 
 Verified VRAM fit with `OLLAMA_CONTEXT_LENGTH=16384`: qwen2.5-coder:14b 100% GPU, gpt-oss:20b 100% GPU, qwen3.6:35b-a3b 98% GPU.
 
+## Plugins
+
+`core/plugin.py` defines the contract. A plugin is a plain object with:
+
+```python
+class Plugin[T: TaskSpec](Protocol):   # TaskSpec: anything with an `id: str`
+    name: str
+    modes: dict[str, set[str]]         # mode -> roles a lineup in that mode must define
+    max_calls: int                     # model calls per task (code_bounty: 20)
+    schema: str                        # SQL for the plugin's own tables, run at the start of each run
+    def load_tasks(self, selector: str | None) -> list[T]: ...
+    def validate_lineup(self, lineup: Lineup) -> None: ...      # raise ValueError
+    async def run_task(self, task: T, lineup: Lineup, session: Session) -> Outcome: ...
+```
+
+- `run_lineup(plugin, lineup, tasks, board, log, selector)` checks the lineup's plugin, mode and roles (`check_roles`), creates one `Session` per task and calls `run_task`. It knows nothing about grading, attempts or roles.
+- `Session.call(role_name, role_config, system, messages)` makes every model call: it enforces `max_calls` (raises `CallLimitReached`), tracks cost, and tags the run log with `role_name`, which can name a player ("villager-2") rather than a lineup role. Provider errors raise `ModelCallFailed`.
+- `run_task` returns `session.outcome(...)`: `score` 0.0-1.0, `attempts` (1 if the plugin doesn't retry), `verdict` (printed before the call count, e.g. "PASS in 2 attempt(s)"), `fail_reason` (the task board marks the task failed with it; None = done), `error` (provider error: not scored), `stop_reason`, and a free-form `metrics` dict stored as JSON.
+- A plugin normally catches `ModelCallFailed` and `CallLimitReached` itself. A `ModelCallFailed` that escapes `run_task` becomes an unscored error outcome. Any other exception fails the task with its message, marks the run interrupted (so the scoreboard doesn't count it as a full run) and propagates.
+- A plugin's infrastructure failure (e.g. `GraderError`) subclasses `PluginError`, with `what = "grader"`. `run_lineup` fails the task with "<what> error: ..." and re-raises, and the CLI aborts the run with "<what> unavailable, run aborted: ...".
+
+### Adding a plugin
+
+1. Create `src/arena/plugins/<name>/` with a class that has the attributes and methods above, and a module-level instance.
+2. Add the instance to the list in `plugins/__init__.py`. That's the whole registry; there are no entry points.
+3. Keep its prompts in its own `roles.py`. If it needs tables, put `CREATE TABLE IF NOT EXISTS` SQL in `schema`. Key rows by `run_id` and `problem_id` (which holds the task id).
+4. Add lineups with `plugin: <name>` to `config/lineups.yaml`. Compare them with `arena scoreboard --plugin <name>`.
+5. Test it the way `tests/test_plugin.py` tests its fake plugin: patch `arena.core.plugin.complete` and call `run_lineup`.
+
 ## Lineups
 
-Defined in `config/lineups.yaml`. A lineup is a mode plus a model per role:
+Defined in `config/lineups.yaml`. A lineup is a plugin (optional, defaults to `code_bounty`), a mode, and a model per role. Unknown keys are rejected, so a typo like `plugn:` fails to load instead of quietly running as code_bounty. Lineups load with `load_lineups(PLUGINS, DEFAULT_PLUGIN)`, which runs `check_lineup` on each: its plugin's modes and roles (`check_roles`), then the plugin's `validate_lineup`. One invalid lineup fails the whole load, and `arena run` reports it and exits 2.
 
 ```yaml
 opus-solo:
@@ -105,7 +138,9 @@ all-local-gptoss:
     reviewer: ollama/gpt-oss:20b
 ```
 
-## Orchestrator loop (team mode)
+## Code bounty loop (team mode)
+
+Lives in `plugins/code_bounty/loop.py`.
 
 1. Pull next problem from the task board
 2. Planner writes a short approach
@@ -113,11 +148,13 @@ all-local-gptoss:
 4. Grader runs the tests
 5. If failing, reviewer reads the code and test output and writes feedback, coder retries
 6. Orchestrator decides: retry, replan, or give up
-7. Hard limits: max 3 attempts per problem (a lineup can set `max_attempts`), max 20 model calls per problem
+7. Hard limits: max 3 attempts per problem (a lineup can set `max_attempts`), max 20 model calls per problem (`CodeBounty.max_calls`). `validate_lineup` rejects a `max_attempts` whose worst case can't fit in 20 calls (team: 4n-2, so at most 5; solo: n).
 
 Solo mode skips planner/reviewer: one model gets the prompt, writes code, sees test failures, and retries, up to 3 attempts (or the lineup's `max_attempts`).
 
-Only one Ollama model should be loaded at a time (16GB VRAM). Run problems sequentially within a lineup.
+A problem scores 1.0 if its tests pass, else 0.0.
+
+Only one Ollama model should be loaded at a time (16GB VRAM). Run tasks sequentially within a lineup, and run a plugin's calls within a task one at a time when they use different local models.
 
 ## Grader sandbox
 
@@ -138,9 +175,13 @@ Model-written code never runs directly on the host.
 
 ## SQLite schema
 
-- `runs`: id, lineup, plugin, started_at, finished_at
-- `calls`: id, run_id, problem_id, role, model, input_tokens, output_tokens, latency_ms, cost_usd, created_at
-- `results`: id, run_id, problem_id, passed, attempts, total_calls, total_cost_usd, wall_time_ms
+`problem_id` means the task id everywhere. Columns added later are listed in `ADDED_COLUMNS` in `runlog.py` and added to older databases when the run log opens. Never rename tables or columns.
+
+- `runs`: id, lineup, plugin, started_at, finished_at, problem (the --problem selector), max_attempts, interrupted (1 if stopped before finishing: Ctrl-C/SIGTERM or an error that aborted the run)
+- `calls`: id, run_id, problem_id, role, model, input_tokens, output_tokens, reasoning_tokens, latency_ms, cost_usd, think, system, messages, response, reasoning, error, truncated, created_at
+- `results`: id, run_id, problem_id, passed, attempts, total_calls, total_cost_usd, wall_time_ms, score, metrics. `score` is 0.0-1.0, `passed` = (score == 1.0), `metrics` is the plugin's JSON. Rows from before plugins have score NULL, and the scoreboard reads `COALESCE(score, passed)`.
+- `tasks` (taskboard): id, run_id, problem_id, status (pending | running | done | failed), reason
+- `attempts` (code_bounty's `schema`): one row per graded attempt, holding code, passed, tests_passed/total, timed_out and output
 
 ## TaskBoard
 
@@ -152,7 +193,10 @@ Define `TaskBoard` as a Protocol (`put`, `next`, `complete`, `fail`). Implement 
 uv run arena smoke                         # one call to each configured model
 uv run arena run --lineup opus-solo        # run all problems with a lineup
 uv run arena run --lineup X --problem 001  # single problem
+uv run arena run --lineup X --repeat 5     # five runs, to see run-to-run noise
 uv run arena scoreboard                    # pass rate, avg attempts, tokens, cost, time per lineup
+uv run arena scoreboard --since 17         # only run 17 and later
+uv run arena scoreboard --plugin X         # another plugin's lineups (default code_bounty)
 ```
 
 ## Build order
@@ -163,6 +207,7 @@ uv run arena scoreboard                    # pass rate, avg attempts, tokens, co
 4. Run log + scoreboard
 5. Team mode
 6. Remaining 7 problems
+7. Plugin interface (code_bounty behind `core/plugin.py`), to make room for Mafia
 
 Stop after each step and confirm it works before moving on.
 

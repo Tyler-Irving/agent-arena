@@ -1,19 +1,23 @@
-"""Scoreboard: compare lineups on pass rate, attempts, tokens, cost and time.
+"""Scoreboard: compare one plugin's lineups on score, attempts, tokens, cost and time.
 
-Every problem result in every run counts as one trial, so running a lineup
+Every task result in every run counts as one trial, so running a lineup
 again adds data rather than replacing it. Runs of one lineup under different
-attempt limits get separate rows. Token and time figures are
-per-problem averages. The per-run range shows how much a lineup's pass rate
-moves between runs, which is the noise any comparison has to beat. It only
-uses runs that covered every problem and weren't interrupted, so runs of
-different problem sets aren't compared.
+attempt limits get separate rows. A trial's score is 0.0-1.0, and "passed"
+sums the scores, so for pass/fail plugins it counts the trials passed. Token
+and time figures are per-task averages. The per-run range shows how much a
+lineup's pass rate moves between runs, which is the noise any comparison has
+to beat. It only uses runs that covered every task and weren't interrupted, so
+runs of different task sets aren't compared.
 """
 
 from pydantic import BaseModel
 
 from arena.core.runlog import RunLog
 
-QUERY = """
+# Results logged before plugins have no score; their passed flag is the score.
+SCORE = "COALESCE(results.score, results.passed)"
+
+QUERY = f"""
 WITH call_totals AS (
     SELECT run_id, problem_id,
            SUM(input_tokens) AS input_tokens,
@@ -26,7 +30,7 @@ SELECT runs.lineup,
        runs.max_attempts,
        COUNT(DISTINCT runs.id) AS runs,
        COUNT(*) AS trials,
-       SUM(results.passed) AS passed,
+       SUM({SCORE}) AS passed,
        AVG(results.attempts) AS avg_attempts,
        AVG(call_totals.input_tokens) AS avg_input_tokens,
        AVG(call_totals.output_tokens) AS avg_output_tokens,
@@ -42,9 +46,9 @@ WHERE runs.plugin = ? AND runs.id >= ?
 GROUP BY runs.lineup, runs.max_attempts
 """
 
-RUN_RANGE = """
+RUN_RANGE = f"""
 WITH full_runs AS (
-    SELECT runs.lineup, runs.max_attempts, AVG(results.passed) AS pass_rate
+    SELECT runs.lineup, runs.max_attempts, AVG({SCORE}) AS pass_rate
     FROM results
     JOIN runs ON runs.id = results.run_id
     WHERE runs.plugin = ? AND runs.id >= ?
@@ -62,7 +66,7 @@ class ScoreRow(BaseModel):
     max_attempts: int | None  # None for runs logged before the limit was recorded
     runs: int
     trials: int
-    passed: int
+    passed: float  # sum of scores
     avg_attempts: float
     avg_input_tokens: float
     avg_output_tokens: float  # includes reasoning
@@ -82,8 +86,8 @@ class ScoreRow(BaseModel):
         return None if self.total_cost_usd is None else self.total_cost_usd / self.trials
 
 
-def scoreboard(log: RunLog, plugin: str = "code_bounty", since: int | None = None) -> list[ScoreRow]:
-    """One row per lineup, best pass rate first, then cheaper, then faster.
+def scoreboard(log: RunLog, plugin: str, since: int | None = None) -> list[ScoreRow]:
+    """One row per lineup of `plugin`, best pass rate first, then cheaper, then faster.
 
     `since` limits the board to that run id and later, e.g. to leave out runs
     made before a change to the problems or the loop.
@@ -140,7 +144,7 @@ def format_scoreboard(rows: list[ScoreRow]) -> str:
             r.lineup,
             "?" if r.max_attempts is None else str(r.max_attempts),
             str(r.runs),
-            f"{r.passed}/{r.trials}",
+            f"{_count(r.passed)}/{r.trials}",
             f"{r.pass_rate:.0%}",
             _range(r.run_low, r.run_high),
             f"{r.avg_attempts:.2f}",
@@ -178,6 +182,10 @@ def _range(low: float | None, high: float | None) -> str:
     if low is None or high is None:
         return "-"
     return f"{low:.0%}" if low == high else f"{low:.0%}-{high:.0%}"
+
+
+def _count(total: float) -> str:
+    return str(int(total)) if total.is_integer() else f"{total:.1f}"
 
 
 def _cost(cost: float | None) -> str:

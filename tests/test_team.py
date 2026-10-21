@@ -6,12 +6,14 @@ from pathlib import Path
 import pytest
 
 from arena.core import orchestrator
+from arena.core import plugin as core_plugin
 from arena.core.lineup import Lineup
 from arena.core.runlog import RunLog
 from arena.core.taskboard import SqliteTaskBoard
 from arena.models.router import ModelResponse
-from arena.plugins.code_bounty import roles
+from arena.plugins.code_bounty import loop, roles
 from arena.plugins.code_bounty.grader import GradeResult
+from arena.plugins.code_bounty.plugin import PLUGIN
 from arena.plugins.code_bounty.problems import load_problems
 
 TEAM = {"orchestrator": "fake/orch", "planner": "fake/plan", "coder": "fake/code", "reviewer": "fake/review"}
@@ -71,15 +73,20 @@ def _run_team(
     async def fake_grade(code, problem_dir):
         return _grade(grades.pop(0))
 
-    monkeypatch.setattr(orchestrator, "complete", fake_complete)
-    monkeypatch.setattr(orchestrator, "grade", fake_grade)
+    monkeypatch.setattr(core_plugin, "complete", fake_complete)
+    monkeypatch.setattr(loop, "grade", fake_grade)
     log = RunLog(tmp_path / "arena.db")
     lineup = Lineup.model_validate(
-        {"name": "fake-team", "mode": "team", "roles": TEAM, "max_attempts": max_attempts}
+        {
+            "name": "fake-team",
+            "plugin": "code_bounty",
+            "mode": "team",
+            "roles": TEAM,
+            "max_attempts": max_attempts,
+        }
     )
-    run_id, outcomes = asyncio.run(
-        orchestrator.run_lineup(lineup, load_problems("001"), SqliteTaskBoard(tmp_path / "arena.db"), log)
-    )
+    board = SqliteTaskBoard(tmp_path / "arena.db")
+    run_id, outcomes = asyncio.run(orchestrator.run_lineup(PLUGIN, lineup, load_problems("001"), board, log))
     assert all(not v for v in replies.values()), f"unused replies: {replies}"
     assert not grades, "unused grades"
     return log, outcomes[0], seen
@@ -93,7 +100,7 @@ def test_team_passes_first_try(monkeypatch, tmp_path) -> None:
     replies = {"planner": [_reply("use a dict")], "coder": [_reply("```python\ngood\n```")]}
     _, outcome, seen = _run_team(monkeypatch, tmp_path, replies, [True])
 
-    assert (outcome.passed, outcome.attempts, outcome.calls) == (True, 1, 2)
+    assert (outcome.score, outcome.attempts, outcome.calls) == (1.0, 1, 2)
     assert [role for role, _ in seen] == ["planner", "coder"]
     assert "Plan:\nuse a dict" in seen[1][1]
 
@@ -107,7 +114,7 @@ def test_team_retry_sends_code_tests_and_review_to_coder(monkeypatch, tmp_path) 
     }
     log, outcome, seen = _run_team(monkeypatch, tmp_path, replies, [False, True])
 
-    assert (outcome.passed, outcome.attempts, outcome.calls) == (True, 2, 5)
+    assert (outcome.score, outcome.attempts, outcome.calls) == (1.0, 2, 5)
     assert outcome.cost_usd == pytest.approx(0.05)
     assert [role for role, _ in seen] == ["planner", "coder", "reviewer", "orchestrator", "coder"]
     review_prompt, decide_prompt, retry_prompt = seen[2][1], seen[3][1], seen[4][1]
@@ -130,7 +137,7 @@ def test_team_replan_gives_coder_the_new_plan_only(monkeypatch, tmp_path) -> Non
     }
     _, outcome, seen = _run_team(monkeypatch, tmp_path, replies, [False, True])
 
-    assert (outcome.passed, outcome.attempts, outcome.calls) == (True, 2, 6)
+    assert (outcome.score, outcome.attempts, outcome.calls) == (1.0, 2, 6)
     assert [role for role, _ in seen] == ["planner", "coder", "reviewer", "orchestrator", "planner", "coder"]
     replan_prompt, coder_prompt = seen[4][1], seen[5][1]
     assert "brute force" in replan_prompt and "too slow" in replan_prompt and "slow\n```" in replan_prompt
@@ -146,7 +153,7 @@ def test_team_orchestrator_gives_up(monkeypatch, tmp_path) -> None:
     }
     _, outcome, _ = _run_team(monkeypatch, tmp_path, replies, [False])
 
-    assert (outcome.passed, outcome.attempts, outcome.calls) == (False, 1, 4)
+    assert (outcome.score, outcome.attempts, outcome.calls) == (0.0, 1, 4)
     assert outcome.stop_reason == "orchestrator gave up"
     assert _task_reason(tmp_path) == "orchestrator gave up after 1 attempts"
 
@@ -161,7 +168,7 @@ def test_team_skips_review_after_last_attempt(monkeypatch, tmp_path) -> None:
     }
     _, outcome, seen = _run_team(monkeypatch, tmp_path, replies, [False, False])
 
-    assert (outcome.passed, outcome.attempts, outcome.calls) == (False, 3, 6)
+    assert (outcome.score, outcome.attempts, outcome.calls) == (0.0, 3, 6)
     # attempt 2 had no code: straight back to the coder, no review or decision
     assert [role for role, _ in seen] == ["planner", "coder", "reviewer", "orchestrator", "coder", "coder"]
     assert "did not contain" in seen[5][1]
@@ -177,7 +184,7 @@ def test_team_no_code_reply_keeps_earlier_code_and_review(monkeypatch, tmp_path)
     }
     _, outcome, seen = _run_team(monkeypatch, tmp_path, replies, [False, True])
 
-    assert (outcome.passed, outcome.attempts) == (True, 3)
+    assert (outcome.score, outcome.attempts) == (1.0, 3)
     third_coder_prompt = seen[-1][1]
     assert "did not contain" in third_coder_prompt
     assert "```python\nbad\n```" in third_coder_prompt and "off by one on line 3" in third_coder_prompt
@@ -189,7 +196,7 @@ def test_team_truncated_reply_gets_token_limit_feedback(monkeypatch, tmp_path) -
     replies = {"planner": [_reply("plan")], "coder": [cut_off, _reply("```python\ngood\n```")]}
     _, outcome, seen = _run_team(monkeypatch, tmp_path, replies, [True])
 
-    assert (outcome.passed, outcome.attempts) == (True, 2)
+    assert (outcome.score, outcome.attempts) == (1.0, 2)
     assert "output token limit" in seen[-1][1]
 
 
@@ -197,14 +204,14 @@ def test_team_model_error_fails_problem_without_scoring_it(monkeypatch, tmp_path
     replies = {"planner": [_reply("plan")], "coder": [RuntimeError("boom")]}
     log, outcome, _ = _run_team(monkeypatch, tmp_path, replies, [])
 
-    assert not outcome.passed and outcome.error == "RuntimeError: boom"
+    assert outcome.score == 0.0 and outcome.error == "RuntimeError: boom"
     assert (outcome.attempts, outcome.calls) == (0, 2)
     assert _task_reason(tmp_path) == "RuntimeError: boom"
     assert log.db.execute("SELECT COUNT(*) FROM results").fetchone()[0] == 0
 
 
 def test_team_respects_call_limit(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(orchestrator, "MAX_CALLS", 3)
+    monkeypatch.setattr(PLUGIN, "max_calls", 3)
     replies = {
         "planner": [_reply("plan")],
         "coder": [_reply("```python\nbad\n```")],
@@ -212,7 +219,7 @@ def test_team_respects_call_limit(monkeypatch, tmp_path) -> None:
     }
     _, outcome, _ = _run_team(monkeypatch, tmp_path, replies, [False])
 
-    assert not outcome.passed and outcome.calls == 3
+    assert outcome.score == 0.0 and outcome.calls == 3
     assert outcome.error is None and outcome.stop_reason == "hit the 3-call limit"
     assert _task_reason(tmp_path) == "hit the 3-call limit after 1 attempts"
 
@@ -230,7 +237,7 @@ def test_orchestrator_sees_earlier_attempts_and_decisions(monkeypatch, tmp_path)
     }
     _, outcome, seen = _run_team(monkeypatch, tmp_path, replies, [False, False, True])
 
-    assert outcome.passed
+    assert outcome.score == 1.0
     first, second = (prompt for role, prompt in seen if role == "orchestrator")
     assert "Earlier attempts" not in first
     assert "Attempt 1 (plan 1) failed. 2 attempt(s) left." in first
@@ -267,7 +274,7 @@ def test_replan_passes_the_reason_and_counts_plans(monkeypatch, tmp_path) -> Non
     }
     _, outcome, seen = _run_team(monkeypatch, tmp_path, replies, [False, False, True])
 
-    assert outcome.passed
+    assert outcome.score == 1.0
     replan_prompt = [prompt for role, prompt in seen if role == "planner"][1]
     assert "brute force cannot pass the big test" in replan_prompt
     second_decision = [prompt for role, prompt in seen if role == "orchestrator"][1]
@@ -317,6 +324,6 @@ def test_lineup_max_attempts_sets_the_limit(monkeypatch, tmp_path) -> None:
     }
     _, outcome, seen = _run_team(monkeypatch, tmp_path, replies, [False] * 4 + [True], max_attempts=5)
 
-    assert (outcome.passed, outcome.attempts) == (True, 5)
+    assert (outcome.score, outcome.attempts) == (1.0, 5)
     decide_prompts = [prompt for role, prompt in seen if role == "orchestrator"]
     assert "4 attempt(s) left" in decide_prompts[0] and "1 attempt(s) left" in decide_prompts[-1]

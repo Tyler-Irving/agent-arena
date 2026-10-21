@@ -78,6 +78,11 @@ def test_max_attempts_must_fit_the_call_limit() -> None:
         _lineup({**solo, "max_attempts": 21})
 
 
+def test_code_bounty_takes_no_settings() -> None:
+    with pytest.raises(ValueError, match=r"code_bounty takes no settings, got \['players'\]"):
+        _lineup({"name": "x", "mode": "solo", "roles": {"solo": "ollama/x"}, "settings": {"players": 7}})
+
+
 def test_5att_lineup_matches_its_base() -> None:
     lineups = load_lineups(PLUGINS, DEFAULT_PLUGIN)
     assert lineups["sonnet-orch-qwen14b-5att"].roles == lineups["sonnet-orch-qwen14b"].roles

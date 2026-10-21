@@ -140,6 +140,21 @@ def test_lineup_checked_against_its_plugin(tmp_path: Path) -> None:
         load("d:\n  mode: duel\n  roles: { player: a/b, judge: a/c }\n")
 
 
+def test_settings_reach_the_plugin(tmp_path: Path) -> None:
+    seen: list[dict] = []
+
+    class Picky(Duel):
+        def validate_lineup(self, lineup: Lineup) -> None:
+            seen.append(lineup.settings)
+
+    path = tmp_path / "lineups.yaml"
+    path.write_text(
+        "d:\n  plugin: duel\n  mode: duel\n  settings: { rounds: 3 }\n  roles: { player: a/b, judge: a/c }\n"
+    )
+    lineups = load_lineups({"duel": Picky()}, DEFAULT_PLUGIN, path)
+    assert lineups["d"].settings == {"rounds": 3} and seen == [{"rounds": 3}]
+
+
 def test_unknown_lineup_key_is_rejected(tmp_path: Path) -> None:
     path = tmp_path / "lineups.yaml"
     # a typo must not quietly fall back to the default plugin

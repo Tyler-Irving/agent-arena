@@ -1,9 +1,10 @@
 # claude-progress.txt — session state (updated 2026-10-21)
 
 ## Start here
-- Build order: steps 1-6 DONE and merged to main (tags step-1-router .. step-6-problems).
-  Step 7 (plugin interface) is on branch refactor/plugin-interface, PR open; user tags step-7-plugins
-  after merge. Next: the Mafia plugin (see "Mafia gaps" below).
+- Build order: steps 1-7 DONE and merged to main (tags step-1-router .. step-6-problems; step 7 =
+  PR #13, plugin interface; user tags step-7-plugins).
+- In progress: Mafia plugin on branch feat/mafia. Approved plan, step by step with a stop after each:
+  ~/.claude/plans/indexed-pondering-twilight.md (see "Mafia plugin" below).
 - GitHub: https://github.com/Tyler-Irving/agent-arena (private). main has steps 1-6, merged
   through one PR per step; build steps are tagged step-1-router .. step-6-problems.
 - Run /code-review before any PR.
@@ -119,12 +120,21 @@
   was ever aborted, so the scoreboard is unchanged); run_lineup checks mode + roles of directly built
   lineups (check_roles); `arena run` prints invalid lineup config errors and exits 2, no traceback.
 
+## Mafia plugin (branch feat/mafia, started 2026-10-21)
+- Decisions: code enforces rules, LLM narrator is flavor only and players never see its text; one speech
+  round in seat order (first speaker rotates daily), then blind votes revealed together; score = 1.0 if
+  town won, metrics JSON for the rest, Mafia report later; at most one Ollama model per lineup; seeds come
+  from the game id only (game-03 deals identically in every lineup); 5-7 players, max_calls = 60.
+- Step 1 DONE: Lineup.settings (plugin-specific, checked by validate_lineup); code_bounty rejects settings.
+- Next: step 2, plugins/mafia/game.py (pure rules) + tests. Then roles/loop/plugin, then lineups, docs and
+  one local + one Haiku game (Sonnet games need the user's OK).
+
 ## Mafia gaps (core assumptions Mafia would still hit; not fixed yet)
 1. What a score means: one Mafia lineup plays both sides, so define it (e.g. 1.0 = town won). The
    scoreboard groups by lineup only; Mafia wants win rate per side/model, i.e. its own report. The
    limit/attempts columns, the "passed" wording and the footer are bounty-shaped.
 2. max_attempts on Lineup/runs is a retry budget; Mafia ignores it but "limit 3" still shows.
-3. HALF DONE: no plugin-specific lineup settings (players: 7, seed). extra="forbid" now rejects unknown
+3. DONE on feat/mafia (Lineup.settings + extra="forbid"). Was: no plugin-specific lineup settings (players: 7, seed). extra="forbid" now rejects unknown
    keys instead of silently dropping them; a `settings:` field checked by validate_lineup is still needed.
 4. One model per role: several villagers share one RoleConfig (fine unless per-player models are wanted).
 5. max_calls is a per-plugin constant; if calls grow with player count, make it a function of the lineup.

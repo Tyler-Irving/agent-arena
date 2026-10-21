@@ -9,7 +9,7 @@ breaks.
 
 import asyncio
 
-from arena.core.lineup import Lineup
+from arena.core.lineup import Lineup, check_roles
 from arena.core.plugin import ModelCallFailed, Outcome, Plugin, PluginError, Session, TaskSpec
 from arena.core.runlog import RunLog, set_runlog
 from arena.core.taskboard import Task, TaskBoard
@@ -27,9 +27,8 @@ async def run_lineup[T: TaskSpec](
 
     `selector` is the --problem the tasks were picked with, recorded on the run.
     """
-    # Whether the lineup suits the plugin is checked when lineups load (check_lineup).
-    if lineup.plugin != plugin.name:
-        raise ValueError(f"lineup {lineup.name!r} is for plugin {lineup.plugin!r}, not {plugin.name!r}")
+    # The plugin's own rules (validate_lineup) are checked when lineups load.
+    check_roles(lineup, plugin)
     set_runlog(log)  # the router logs calls to the same database as the run
     log.db.executescript(plugin.schema)
     run_id = log.start_run(lineup.name, plugin.name, selector, lineup.max_attempts)
@@ -89,6 +88,13 @@ async def run_lineup[T: TaskSpec](
         interrupted = True
         if claimed is not None:
             await board.fail(claimed.id, "interrupted")
+        raise
+    except Exception as e:
+        # A broken sandbox, or a bug. The run stopped short, so it mustn't
+        # count as a full run, and no task should be left "running".
+        interrupted = True
+        if claimed is not None:
+            await board.fail(claimed.id, f"{type(e).__name__}: {e}")
         raise
     finally:
         log.finish_run(run_id, interrupted=interrupted)

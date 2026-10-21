@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS runs (
     finished_at TEXT,
     problem TEXT,  -- the --problem selector, NULL when the run covered every problem
     max_attempts INTEGER,  -- the lineup's attempt limit for this run
-    interrupted INTEGER  -- 1 if stopped by Ctrl-C/SIGTERM before finishing
+    interrupted INTEGER  -- 1 if stopped before finishing: Ctrl-C/SIGTERM, or an error aborted it
 );
 
 CREATE TABLE IF NOT EXISTS calls (

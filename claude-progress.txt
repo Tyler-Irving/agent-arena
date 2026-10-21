@@ -114,6 +114,10 @@
   (results.attempts is NOT NULL); passed = score == 1.0; Outcome carries verdict + fail_reason so core
   needn't know "PASS"/"tests failing"; the attempts table moved to code_bounty via Plugin.schema;
   --plugin is on scoreboard only (a lineup names its plugin, so run takes it from there).
+- /code-review fixes: a run aborted by any error (GraderError included) is now interrupted=1 and its
+  claimed task is failed with the error, not left "running" (both were also true on main; no real run
+  was ever aborted, so the scoreboard is unchanged); run_lineup checks mode + roles of directly built
+  lineups (check_roles); `arena run` prints invalid lineup config errors and exits 2, no traceback.
 
 ## Mafia gaps (core assumptions Mafia would still hit; not fixed yet)
 1. What a score means: one Mafia lineup plays both sides, so define it (e.g. 1.0 = town won). The

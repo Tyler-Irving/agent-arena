@@ -55,8 +55,10 @@ class Lineup(BaseModel):
         return self
 
 
-def check_lineup(lineup: Lineup, plugin: "Plugin[Any]") -> None:
-    """Raise ValueError unless `plugin` can run `lineup`."""
+def check_roles(lineup: Lineup, plugin: "Plugin[Any]") -> None:
+    """Raise ValueError unless the lineup is for `plugin`, in one of its modes, with that mode's roles."""
+    if lineup.plugin != plugin.name:
+        raise ValueError(f"lineup {lineup.name!r} is for plugin {lineup.plugin!r}, not {plugin.name!r}")
     if lineup.mode not in plugin.modes:
         raise ValueError(
             f"lineup {lineup.name!r}: {plugin.name} has no mode {lineup.mode!r}; "
@@ -65,6 +67,11 @@ def check_lineup(lineup: Lineup, plugin: "Plugin[Any]") -> None:
     missing = plugin.modes[lineup.mode] - lineup.roles.keys()
     if missing:
         raise ValueError(f"{lineup.mode} lineup {lineup.name!r} is missing roles: {sorted(missing)}")
+
+
+def check_lineup(lineup: Lineup, plugin: "Plugin[Any]") -> None:
+    """Raise ValueError unless `plugin` can run `lineup`: check_roles, then the plugin's own rules."""
+    check_roles(lineup, plugin)
     plugin.validate_lineup(lineup)
 
 

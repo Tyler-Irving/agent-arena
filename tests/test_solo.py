@@ -258,3 +258,4 @@ def test_grader_error_marks_task_failed_and_aborts(monkeypatch, tmp_path) -> Non
     status, reason = board.db.execute("SELECT status, reason FROM tasks").fetchone()
     assert (status, reason) == ("failed", "grader error: docker went away")
     assert log.db.execute("SELECT finished_at FROM runs").fetchone()[0] is not None
+    assert log.db.execute("SELECT interrupted FROM runs").fetchone()[0] == 1  # cut short, not a full run

@@ -98,10 +98,10 @@ class Plugin[T: TaskSpec](Protocol):   # TaskSpec: anything with an `id: str`
     async def run_task(self, task: T, lineup: Lineup, session: Session) -> Outcome: ...
 ```
 
-- `run_lineup(plugin, lineup, tasks, board, log, selector)` creates one `Session` per task and calls `run_task`. It knows nothing about grading, attempts or roles.
+- `run_lineup(plugin, lineup, tasks, board, log, selector)` checks the lineup's plugin, mode and roles (`check_roles`), creates one `Session` per task and calls `run_task`. It knows nothing about grading, attempts or roles.
 - `Session.call(role_name, role_config, system, messages)` makes every model call: it enforces `max_calls` (raises `CallLimitReached`), tracks cost, and tags the run log with `role_name`, which can name a player ("villager-2") rather than a lineup role. Provider errors raise `ModelCallFailed`.
 - `run_task` returns `session.outcome(...)`: `score` 0.0-1.0, `attempts` (1 if the plugin doesn't retry), `verdict` (printed before the call count, e.g. "PASS in 2 attempt(s)"), `fail_reason` (the task board marks the task failed with it; None = done), `error` (provider error: not scored), `stop_reason`, and a free-form `metrics` dict stored as JSON.
-- A plugin normally catches `ModelCallFailed` and `CallLimitReached` itself. A `ModelCallFailed` that escapes `run_task` becomes an unscored error outcome; anything else propagates.
+- A plugin normally catches `ModelCallFailed` and `CallLimitReached` itself. A `ModelCallFailed` that escapes `run_task` becomes an unscored error outcome. Any other exception fails the task with its message, marks the run interrupted (so the scoreboard doesn't count it as a full run) and propagates.
 - A plugin's infrastructure failure (e.g. `GraderError`) subclasses `PluginError`, with `what = "grader"`. `run_lineup` fails the task with "<what> error: ..." and re-raises, and the CLI aborts the run with "<what> unavailable, run aborted: ...".
 
 ### Adding a plugin
@@ -114,7 +114,7 @@ class Plugin[T: TaskSpec](Protocol):   # TaskSpec: anything with an `id: str`
 
 ## Lineups
 
-Defined in `config/lineups.yaml`. A lineup is a plugin (optional, defaults to `code_bounty`), a mode, and a model per role. Unknown keys are rejected, so a typo like `plugn:` fails to load instead of quietly running as code_bounty. Lineups load with `load_lineups(PLUGINS, DEFAULT_PLUGIN)`, which checks each one against its plugin's modes and roles and its `validate_lineup`.
+Defined in `config/lineups.yaml`. A lineup is a plugin (optional, defaults to `code_bounty`), a mode, and a model per role. Unknown keys are rejected, so a typo like `plugn:` fails to load instead of quietly running as code_bounty. Lineups load with `load_lineups(PLUGINS, DEFAULT_PLUGIN)`, which runs `check_lineup` on each: its plugin's modes and roles (`check_roles`), then the plugin's `validate_lineup`. One invalid lineup fails the whole load, and `arena run` reports it and exits 2.
 
 ```yaml
 opus-solo:
@@ -177,7 +177,7 @@ Model-written code never runs directly on the host.
 
 `problem_id` means the task id everywhere. Columns added later are listed in `ADDED_COLUMNS` in `runlog.py` and added to older databases when the run log opens. Never rename tables or columns.
 
-- `runs`: id, lineup, plugin, started_at, finished_at, problem (the --problem selector), max_attempts, interrupted
+- `runs`: id, lineup, plugin, started_at, finished_at, problem (the --problem selector), max_attempts, interrupted (1 if stopped before finishing: Ctrl-C/SIGTERM or an error that aborted the run)
 - `calls`: id, run_id, problem_id, role, model, input_tokens, output_tokens, reasoning_tokens, latency_ms, cost_usd, think, system, messages, response, reasoning, error, truncated, created_at
 - `results`: id, run_id, problem_id, passed, attempts, total_calls, total_cost_usd, wall_time_ms, score, metrics. `score` is 0.0-1.0, `passed` = (score == 1.0), `metrics` is the plugin's JSON. Rows from before plugins have score NULL, and the scoreboard reads `COALESCE(score, passed)`.
 - `tasks` (taskboard): id, run_id, problem_id, status (pending | running | done | failed), reason

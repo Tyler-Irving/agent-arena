@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel, ValidationError
 
+from arena import cli
 from arena.core import orchestrator
 from arena.core import plugin as core_plugin
 from arena.core.lineup import Lineup, get_lineup, load_lineups
@@ -54,6 +55,8 @@ class Duel:
         if verdict.text == "escape":
             # let the provider error through, for run_lineup to handle
             await session.call("judge", lineup.roles["judge"], "judge", [])
+        if verdict.text == "crash":
+            raise ZeroDivisionError("a bug in the plugin")
         winner = verdict.text
         session.log.db.execute("INSERT INTO duel_rounds VALUES (?, ?)", (task.id, winner))
         return session.outcome(score=0.5, verdict=f"{winner} won", metrics={"winner": winner})
@@ -226,6 +229,42 @@ def test_run_lineup_rejects_another_plugins_lineup(tmp_path: Path) -> None:
     log = RunLog(tmp_path / "arena.db")
     with pytest.raises(ValueError, match="for plugin 'duel', not 'code_bounty'"):
         asyncio.run(orchestrator.run_lineup(CODE_BOUNTY, lineup, [], SqliteTaskBoard(tmp_path / "a.db"), log))
+
+
+def test_run_lineup_checks_mode_and_roles(tmp_path: Path) -> None:
+    # a lineup built directly, not through load_lineups
+    lineup = Lineup.model_validate({**DUEL_LINEUP, "roles": {"player": "fake/player"}})
+    log = RunLog(tmp_path / "arena.db")
+    with pytest.raises(ValueError, match="missing roles"):
+        asyncio.run(orchestrator.run_lineup(DUEL, lineup, [], SqliteTaskBoard(tmp_path / "a.db"), log))
+
+
+def test_plugin_crash_fails_the_task_and_marks_the_run_cut_short(monkeypatch, tmp_path) -> None:
+    with pytest.raises(ZeroDivisionError):
+        _run_duel(monkeypatch, tmp_path, judge_says="crash")
+
+    board = SqliteTaskBoard(tmp_path / "arena.db")
+    tasks = board.db.execute("SELECT problem_id, status, reason FROM tasks ORDER BY id").fetchall()
+    assert [tuple(t) for t in tasks] == [
+        ("r1", "failed", "ZeroDivisionError: a bug in the plugin"),
+        ("r2", "pending", None),
+    ]
+    run = RunLog(tmp_path / "arena.db").db.execute("SELECT finished_at IS NOT NULL, interrupted FROM runs")
+    # interrupted, so the scoreboard's per-run range doesn't treat it as a full run
+    assert run.fetchone()[:] == (1, 1)
+
+
+def test_cli_reports_an_invalid_lineup_config(monkeypatch, tmp_path, capsys) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "lineups.yaml").write_text("x:\n  mode: duel\n  roles: { solo: a/b }\n")
+    monkeypatch.chdir(tmp_path)
+    assert asyncio.run(cli.run("x", None, 1)) == 2
+    assert "invalid lineup config: lineup 'x': code_bounty has no mode 'duel'" in capsys.readouterr().err
+
+
+def test_cli_scoreboard_unknown_plugin(capsys) -> None:
+    assert cli.show_scoreboard("mafia", None) == 2
+    assert "unknown plugin 'mafia'; choose from: code_bounty" in capsys.readouterr().err
 
 
 def test_core_imports_no_plugin() -> None:

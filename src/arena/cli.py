@@ -62,6 +62,9 @@ async def run(lineup_name: str, problem: str | None, repeat: int) -> int:
     except KeyError as e:
         print(e.args[0], file=sys.stderr)
         return 2
+    except ValueError as e:  # a lineup in the file doesn't suit its plugin, or is malformed
+        print(f"invalid lineup config: {e}", file=sys.stderr)
+        return 2
     plugin = get_plugin(lineup.plugin)  # load_lineups already rejected unknown plugins
     problems = plugin.load_tasks(problem)
     if not problems:
@@ -147,8 +150,10 @@ def run_stoppable(command: Coroutine[Any, Any, int]) -> int:
 
 
 def show_scoreboard(plugin: str, since: int | None) -> int:
-    if plugin not in PLUGINS:
-        print(f"unknown plugin {plugin!r}; choose from: {', '.join(PLUGINS)}", file=sys.stderr)
+    try:
+        get_plugin(plugin)
+    except KeyError as e:
+        print(e.args[0], file=sys.stderr)
         return 2
     rows = scoreboard(get_runlog(), plugin, since=since)
     if not rows:

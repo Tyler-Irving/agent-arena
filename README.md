@@ -123,6 +123,46 @@ uv run arena scoreboard --plugin mafia               # "pass" is the town win ra
 Lineups such as `mafia-sonnet-vs-haiku` put a different model on each side. Every event goes to
 the `mafia_events` table, and every prompt to `calls`, so a game can be replayed per player.
 
+## Watching runs
+
+Every step of a run is also written to an `events` table as it happens. That covers each task
+starting and finishing, each model call starting and finishing, and each plugin's own steps:
+plans, grades, reviews and decisions; nights, speeches, votes and kills. One terminal viewer
+reads them, so watching live and replaying later look the same.
+
+```bash
+uv run arena run --lineup all-local-gptoss --watch   # run with a live view; the usual lines still print above it
+uv run arena watch                                   # from another terminal: the run in progress, or the next one
+uv run arena watch 32                                # a given run
+uv run arena replay 32 --speed 10                    # play a finished run back 10x as fast
+uv run arena replay 32 --speed 0                     # just its final state
+uv run arena replay 33 --hide-roles                  # Mafia: hide each role until that player is out
+```
+
+The view shows the run (lineup, task N/M, elapsed time, cost so far), the task list, a panel
+for the current task, and a call log (role, model, tokens, latency, cost, outcome). In flight,
+the current call has a running timer.
+
+```
+004-bracket-expand · attempt 2/3 · plan 1
+planner ──▶ coder ──▶ grader ──▶ reviewer ──▶ orchestrator
+sonnet      qwen14b   docker     qwen14b      sonnet
+  ✔         ● 14s…
+last: attempt 1 ✘ 7/9 tests · review: off by one on nested braces · RETRY: small fix
+```
+
+A Mafia game shows the seats, who is speaking or voting, the votes once they are revealed
+(blind votes stay blind in the view too), and the latest kill or elimination. Roles are shown
+by default. With `--hide-roles`, a role stays hidden until that player is out or the game ends.
+So do night actions, and the model, tokens and cost of a hidden player's calls, since a
+mafia-only model would give them away.
+
+`arena watch` and `arena replay` open the database read-only. Runs from before events were
+added (and `arena smoke` runs) have none, so they can't be replayed. The database is in SQLite's
+WAL mode so a viewer never blocks a run. Back it up with
+`sqlite3 data/arena.db ".backup data/backup.db"` rather than `cp`, which can miss writes still in
+`arena.db-wal`, and don't open it from Windows over `\\wsl$`.
+
 ## Safety
 
 Model-written code never runs on the host. Each grade runs in a fresh container with
@@ -133,18 +173,20 @@ all capabilities dropped and a non-root user. Containers are killed after 30 sec
 
 ```
 src/arena/
-  cli.py                     arena smoke | run | scoreboard
+  cli.py                     arena smoke | run [--watch] | watch | replay | scoreboard
   models/router.py           one async complete() over Anthropic and Ollama
   models/pricing.py          per-model token prices (local models are free)
   core/plugin.py             the Plugin protocol, and the Session/Outcome a plugin works with
   core/orchestrator.py       run_lineup: runs a plugin's tasks, logs results, handles Ctrl-C
   core/taskboard.py          TaskBoard protocol + SQLite implementation
-  core/runlog.py             SQLite log of runs, calls and results
+  core/runlog.py             SQLite log of runs, calls, results and events
+  core/events.py             the Event model and how to read a run's events back
   core/scoreboard.py         per-lineup aggregates
   core/lineup.py             lineup config loading, checked against each lineup's plugin
   plugins/__init__.py        the plugin registry: a plain dict of name -> plugin
-  plugins/code_bounty/       solo/team loops (loop.py), prompts (roles.py), grader, problems
-  plugins/mafia/             game rules (game.py), game loop (loop.py), prompts (roles.py)
+  plugins/code_bounty/       solo/team loops (loop.py), prompts (roles.py), grader, problems, view.py
+  plugins/mafia/             game rules (game.py), game loop (loop.py), prompts (roles.py), view.py
+  watch/                     the terminal viewer (Rich): run --watch, watch, replay
 docker/arena-grader/         grading sandbox image
 config/lineups.yaml          lineups
 problems/                    coding problems
@@ -155,7 +197,9 @@ tests/                       pytest suite (grader tests skip without Docker)
 
 A plugin is a plain object with a name, its modes and the roles each one needs, a call
 limit per task, `load_tasks`, `validate_lineup` and `run_task`. It is listed in
-`src/arena/plugins/__init__.py`. See "Adding a plugin" in [CLAUDE.md](CLAUDE.md).
+`src/arena/plugins/__init__.py`. Its model calls show up in `arena watch` straight away. It can
+log its own steps with `session.emit(...)` and draw them with an optional `view.py`. See
+"Adding a plugin" in [CLAUDE.md](CLAUDE.md).
 
 ## Development
 
@@ -175,6 +219,7 @@ uv run ruff check src tests && uv run ruff format --check src tests && uv run py
 | 6. Ten problems, mostly medium or harder | ✅ | `step-6-problems` |
 | 7. Plugin interface, making room for a second task type | ✅ | `step-7-plugins` |
 | 8. Mafia plugin | ✅ | `step-8-mafia` |
+| Live view and replay (`arena watch`, `arena replay`) | ✅ | |
 
 The first three problems are warm-ups. Problems 004-010 are medium to hard, and
 each one has edge cases that its prompt states but that are easy to miss

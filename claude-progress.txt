@@ -3,16 +3,17 @@
 ## Start here
 - Build order: steps 1-8 DONE and merged to main, tagged step-1-router .. step-8-mafia
   (step 7 = PR #13 plugin interface, tag step-7-plugins; step 8 = PR #14 Mafia plugin, tag step-8-mafia).
-- Nothing in progress. Next candidate: a Mafia report, plus more games per lineup (one game each so far),
-  see "Mafia matchups" below. Paid runs (anthropic/*) need the user's OK; auto mode blocks them, so the
-  user may run them with `! uv run arena run ...`.
-- GitHub: https://github.com/Tyler-Irving/agent-arena (private). main has steps 1-8, merged
+- In progress: branch feat/watch (live view + replay), see "Live view and replay" below; PR open
+  after /code-review. Next candidates after it: a Mafia report, plus more games per lineup (one game
+  each so far), see "Mafia matchups" below. Paid runs (anthropic/*) need the user's OK; auto mode
+  blocks them, so the user may run them with `! uv run arena run ...`.
+- GitHub: https://github.com/Tyler-Irving/agent-arena (public). main has steps 1-8, merged
   through one PR per step; each step's tag points at its PR's merge commit (from step 6 on).
 - Run /code-review before any PR.
 - Docker Desktop must be running. In WSL, /usr/bin/docker is a stub until it starts.
   Start from WSL: cmd.exe /c start "" "C:\Program Files\Docker\Docker\Docker Desktop.exe"
 - Verify the state before changing anything:
-    uv run ruff check src tests && uv run ruff format --check src tests && uv run pyright src tests && uv run pytest -q   # 175 passing
+    uv run ruff check src tests && uv run ruff format --check src tests && uv run pyright src tests && uv run pytest -q   # 220 passing (175 on main)
     uv run arena scoreboard
 
 ## What exists
@@ -179,14 +180,45 @@ Same deal every time: Blake + Emery mafia, Avery detective (game-01).
 - All four games: zero invalid replies, leak audit clean (no narrator-only text, partner info or check
   results in the wrong prompts). Total spent on Mafia so far: $0.17.
 
+## Live view and replay (branch feat/watch, 2026-10-21)
+- Events: core/events.py (Event, read_events, EVENTS_VERSION = 1) + an `events` table in RunLog's SCHEMA,
+  committed per event; the db is now in WAL mode (data/arena.db converted on run 32; pre-WAL backup
+  data/arena-before-watch.db, made with the sqlite backup API). Core logs run_started (events_version,
+  lineup, roles, tasks, ...), task_started, call_started/call_finished (Session.call; no reply text),
+  task_finished, run_finished, exactly once per task/run on every path (PluginError, crash, Ctrl-C).
+  Plugins use Session.emit: code_bounty grading/graded/plan/review/decision/replan; mafia
+  deal/phase/proposal/check/kill/speech/votes (+ invalid, emitted once at the reveal)/elimination/win.
+- Viewer: src/arena/watch/ (state, views, render, app; Rich). `arena run --watch` (Live, prints still
+  scroll above it, polls log.db every 250 ms), `arena watch [RUN_ID]` (read-only; no id = the run in
+  progress, else waits for the next), `arena replay RUN_ID [--speed N] [--hide-roles]`. Plugin views:
+  plugins/<name>/view.py, found by name (code_bounty chain, mafia seats); GenericView otherwise.
+  --hide-roles masks roles, night actions and hidden players' model/tokens/cost until out or game end.
+- Output unchanged: a test runs scripted solo/team/mafia runs with and without events and compares
+  stdout + every other table; a scratch diff against a main worktree was byte-identical.
+- Real checks (free, local): run 32 mafia-gptoss game-04 with --watch under a pty, TOWN WON day 2,
+  29 calls, 221 s; `arena replay 32 --speed 10` took 23.6 s. Run 33 game-05 with `arena watch
+  --hide-roles` attached from another process before the run started: it waited, followed, exited at
+  run_finished; no mafia/proposal/check text before the end, Gray's role first shown when voted out.
+  MAFIA WON night 2, 20 calls.
+- WSL2 clock finding: the wall clock keeps host time but is stepped back ~0.5 s every few seconds,
+  while CLOCK_MONOTONIC/perf_counter runs ~10% fast (run 32: 201 s wall vs 221 s perf_counter; 20 s
+  host = 18.8 s wall = 20.8 s monotonic). So latency_ms and wall_time_ms everywhere currently read ~10%
+  high on this machine (not fixed; affects all runs, not just this branch). Events use utc_now() like
+  every other table; the viewer never moves its clock back and clamps durations at 0. Run 32's event
+  timestamps came from an interim monotonic clock (reverted in 4f92c07); its replay is still consistent.
+- A read-only viewer still makes SQLite create the db's -shm/-wal files if they are missing (normal for
+  WAL); in a read-only dir with no -wal file the viewer opens the db as immutable instead. Back up with
+  `sqlite3 data/arena.db ".backup <file>"`, not cp; don't open the db from Windows over \\wsl$.
+
 ## Mafia gaps (core assumptions Mafia would still hit; not fixed yet)
-1. PARTLY: score = 1.0 if town won (decided). Still open: one Mafia lineup plays both sides, so define it (e.g. 1.0 = town won). The
-   scoreboard groups by lineup only; Mafia wants win rate per side/model, i.e. its own report. The
-   limit/attempts columns, the "passed" wording and the footer are bounty-shaped.
+1. PARTLY: the score is decided: 1.0 = town won, so the scoreboard's pass column is the town win rate.
+   Still open: one Mafia lineup plays both sides and the scoreboard groups by lineup only, so win rate
+   per side/model needs its own report. The limit/attempts columns, the "passed" wording and the
+   footer are bounty-shaped.
 2. OPEN: max_attempts on Lineup/runs is a retry budget; Mafia ignores it but "limit 3" still shows
    (also in the run header: "max 3 attempts").
-3. DONE on feat/mafia (Lineup.settings + extra="forbid"). Was: no plugin-specific lineup settings (players: 7, seed). extra="forbid" now rejects unknown
-   keys instead of silently dropping them; a `settings:` field checked by validate_lineup is still needed.
+3. DONE (PR #14): plugin-specific lineup options live in Lineup.settings (Mafia: players), checked by the
+   plugin's validate_lineup, and extra="forbid" rejects unknown lineup keys instead of dropping them.
 4. One model per role: several villagers share one RoleConfig (fine unless per-player models are wanted).
 5. CLOSED: max_calls stays a constant; worst_case_calls proves 45 <= 60 for the largest legal game.
 6. OPEN: CLI wording: "N problem(s)", "max N attempts", "X/Y passed", --problem, "no problems match",

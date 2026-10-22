@@ -23,7 +23,8 @@ src/arena/             # package (src layout; `arena` script -> arena.cli:main)
     plugin.py          # Plugin protocol, Session, Outcome, PluginError: the core <-> plugin contract
     orchestrator.py    # run_lineup: run bookkeeping, task board, results, Ctrl-C/SIGTERM
     taskboard.py       # TaskBoard protocol + SQLite implementation
-    runlog.py          # logs every model call and result to SQLite
+    runlog.py          # logs every model call, result and event to SQLite (WAL mode)
+    events.py          # Event model, read_events, EVENTS_VERSION: what `arena watch` reads
     scoreboard.py      # per-lineup aggregates over one plugin's runs for `arena scoreboard`
     lineup.py          # loads lineup configs, checks them against their plugin
   plugins/
@@ -34,11 +35,18 @@ src/arena/             # package (src layout; `arena` script -> arena.cli:main)
       roles.py         # system prompts for orchestrator, solo, planner, coder, reviewer
       grader.py        # runs tests in Docker, returns pass/fail + output
       problems.py      # loads problems/, extracts code from model replies
+      view.py          # its arena watch panel: the solo/team chain, attempt, last grade/review/decision
     mafia/
       plugin.py        # Mafia: one mode (game), 60-call limit, settings.players, game-01..game-10
       game.py          # pure rules: deal, speaking order, votes, choice parsing, win check, call bound
       loop.py          # MafiaGame: nights and days via session.call, the mafia_events table
       roles.py         # player and narrator prompts, code-written fact lines
+      view.py          # its arena watch panel: seats, actor, revealed votes, facts, --hide-roles
+  watch/               # the terminal viewer (Rich); core never imports it
+    state.py           # RunState: folds a run's events into what the screen shows
+    views.py           # TaskView protocol, GenericView, view_for(plugin) -> plugins/<name>/view.py
+    render.py          # header, task list, task panel, call log
+    app.py             # watch_run (run --watch), attach (arena watch), replay (arena replay)
   cli.py               # entry point; the only place that wires core to the plugin registry
 tests/                 # pytest unit tests; grader tests skip if Docker/image missing
 docker/
@@ -104,10 +112,27 @@ class Plugin[T: TaskSpec](Protocol):   # TaskSpec: anything with an `id: str`
 ```
 
 - `run_lineup(plugin, lineup, tasks, board, log, selector)` checks the lineup's plugin, mode and roles (`check_roles`), creates one `Session` per task and calls `run_task`. It knows nothing about grading, attempts or roles.
-- `Session.call(role_name, role_config, system, messages)` makes every model call: it enforces `max_calls` (raises `CallLimitReached`), tracks cost, and tags the run log with `role_name`, which can name a player ("villager-2") rather than a lineup role. Provider errors raise `ModelCallFailed`.
+- `Session.call(role_name, role_config, system, messages)` makes every model call: it enforces `max_calls` (raises `CallLimitReached`), tracks cost, and tags the run log with `role_name`, which can name a player ("villager-2") rather than a lineup role. Provider errors raise `ModelCallFailed`. It also logs `call_started`/`call_finished` events. `Session.emit(kind, **data)` logs a plugin event, so a plugin never touches the events table itself.
 - `run_task` returns `session.outcome(...)`: `score` 0.0-1.0, `attempts` (1 if the plugin doesn't retry), `verdict` (printed before the call count, e.g. "PASS in 2 attempt(s)"), `fail_reason` (the task board marks the task failed with it; None = done), `error` (provider error: not scored), `stop_reason`, and a free-form `metrics` dict stored as JSON.
 - A plugin normally catches `ModelCallFailed` and `CallLimitReached` itself. A `ModelCallFailed` that escapes `run_task` becomes an unscored error outcome. Any other exception fails the task with its message, marks the run interrupted (so the scoreboard doesn't count it as a full run) and propagates.
 - A plugin's infrastructure failure (e.g. `GraderError`) subclasses `PluginError`, with `what = "grader"`. `run_lineup` fails the task with "<what> error: ..." and re-raises, and the CLI aborts the run with "<what> unavailable, run aborted: ...".
+
+### Events (what `arena watch` shows)
+
+Every step of a run is a row in `events`, committed as it happens. The database is in WAL mode, so a viewer in another process never blocks the run. Core logs:
+- `run_started`: events_version, lineup, plugin, mode, roles, tasks, selector, max_attempts, settings, max_calls
+- `task_started`: index, total
+- `call_started` and `call_finished`: from Session.call, with tokens, latency, cost, truncated and error ("interrupted" on Ctrl-C), but never the reply text
+- `task_finished`: status done/failed/error/interrupted, verdict, score, reason, calls, cost, wall time
+- `run_finished`: interrupted
+
+Every task_started gets exactly one task_finished, and the run_started one run_finished, on every path (plugin error, crash, Ctrl-C).
+
+A plugin logs its own steps with `session.emit(kind, **data)`:
+- code_bounty: grading, graded, plan, review, decision, replan
+- mafia: deal, phase, proposal, check, kill, speech, votes (once, after the day's last vote, with `invalid`), elimination, win
+
+Data must be JSON-friendly and must never hold anything some agent isn't meant to see yet, since the viewer shows every event. Changing an event's shape means bumping `EVENTS_VERSION` in `core/events.py`. The viewer refuses runs with another version ("run N uses event format vX, this viewer reads v1").
 
 ### Adding a plugin
 
@@ -116,6 +141,13 @@ class Plugin[T: TaskSpec](Protocol):   # TaskSpec: anything with an `id: str`
 3. Keep its prompts in its own `roles.py`. If it needs tables, put `CREATE TABLE IF NOT EXISTS` SQL in `schema`. Key rows by `run_id` and `problem_id` (which holds the task id).
 4. Add lineups with `plugin: <name>` to `config/lineups.yaml`. Compare them with `arena scoreboard --plugin <name>`.
 5. Test it the way `tests/test_plugin.py` tests its fake plugin: patch `arena.core.plugin.complete` and call `run_lineup`.
+6. Optional, for `arena watch`:
+   - `session.emit(...)` the steps worth seeing.
+   - A `plugins/<name>/view.py` with `make_view(task_id, run, options)` returning a `TaskView`: `update(event)`, `render(now)`, and `mask(event)`, which returns None unless a call must be hidden.
+   - It is found by name; nothing registers it.
+   - Only `arena.watch` imports it, so the plugin itself never loads Rich.
+   - Without one, the generic panel lists the plugin's events.
+   - Test it the way `tests/test_watch.py` does: replay a scripted run with `--speed 0` into `Console(record=True)`.
 
 ## Lineups
 
@@ -205,6 +237,7 @@ Model-written code never runs directly on the host.
 - `tasks` (taskboard): id, run_id, problem_id, status (pending | running | done | failed), reason
 - `attempts` (code_bounty's `schema`): one row per graded attempt, holding code, passed, tests_passed/total, timed_out and output
 - `mafia_events` (mafia's `schema`): id, run_id, problem_id (game id), day (night/day number, 0 for the deal), phase (setup | night | day), kind (role | kill | check | speech | vote | elimination | announcement), actor, target, text
+- `events` (core): id (the viewer's polling cursor), run_id, problem_id (NULL for run events), ts (utc_now), kind, role and model (call events only), data (JSON). See "Events" above. Runs from before it have no events.
 
 ## TaskBoard
 
@@ -222,7 +255,13 @@ uv run arena scoreboard --since 17         # only run 17 and later
 uv run arena scoreboard --plugin X         # another plugin's lineups (default code_bounty)
 uv run arena run --lineup mafia-haiku --problem 03   # one Mafia game
 uv run arena scoreboard --plugin mafia     # pass = town win rate
+uv run arena run --lineup X --watch        # live view; the usual lines still print above it
+uv run arena watch [RUN_ID]                # attach read-only from another terminal (default: the run in progress, else the next)
+uv run arena replay RUN_ID [--speed N]     # gaps divided by N; 0 = final frame only; exits 2 for runs with no events
+uv run arena replay RUN_ID --hide-roles    # Mafia: hide each role until that player is out or the game ends
 ```
+
+Back up the database with `sqlite3 data/arena.db ".backup <file>"`, not `cp`: in WAL mode recent writes can still be in `arena.db-wal`.
 
 ## Build order
 

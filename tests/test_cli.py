@@ -1,6 +1,7 @@
 """CLI: repeated runs, and stopping a run cleanly on Ctrl-C or SIGTERM."""
 
 import asyncio
+import json
 import signal
 import subprocess
 import sys
@@ -196,6 +197,12 @@ def test_signal_stops_run_cleanly(tmp_path: Path, sig: signal.Signals) -> None:
     run = log.db.execute("SELECT finished_at, interrupted, problem FROM runs").fetchone()
     assert run["finished_at"] is not None and (run["interrupted"], run["problem"]) == (1, "001")
     assert tuple(log.db.execute("SELECT status, reason FROM tasks").fetchone()) == ("failed", "interrupted")
+    # the events end the same way, so a viewer shows the stop
+    rows = log.db.execute("SELECT kind, data FROM events ORDER BY id DESC LIMIT 4").fetchall()[::-1]
+    tail = [(kind, json.loads(data)) for kind, data in rows]
+    assert [kind for kind, _ in tail] == ["call_started", "call_finished", "task_finished", "run_finished"]
+    assert tail[1][1]["error"] == tail[2][1]["status"] == "interrupted"
+    assert tail[3][1] == {"interrupted": True}
 
 
 def test_second_signal_does_not_cut_cleanup_short(tmp_path: Path) -> None:

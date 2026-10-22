@@ -7,6 +7,7 @@ which modes and roles a lineup needs, and the whole loop of model calls for one
 task, which it makes through the Session it is handed.
 """
 
+import asyncio
 import time
 from typing import Any, Protocol
 
@@ -97,6 +98,19 @@ class Session:
         if self.calls >= self.max_calls:
             raise CallLimitReached(f"hit the {self.max_calls}-call limit")
         self.calls += 1
+        n = self.calls
+
+        def event(kind: str, data: dict[str, Any]) -> None:
+            self.log.log_event(self.run_id, self.task_id, kind, {"n": n, **data}, role_name, role.model)
+
+        def failed(error: str) -> None:
+            event("call_finished", {"latency_ms": int((time.perf_counter() - start) * 1000), "error": error})
+
+        event("call_started", {"max_calls": self.max_calls})
+        start = time.perf_counter()
+
+        # Events are logged outside the try body, so a logging failure can't be
+        # mistaken for a provider error.
         try:
             reply = await complete(
                 role.model,
@@ -107,10 +121,35 @@ class Session:
                 problem_id=self.task_id,
                 role=role_name,
             )
+        except asyncio.CancelledError:
+            failed("interrupted")
+            raise
         except Exception as e:
-            raise ModelCallFailed(f"{type(e).__name__}: {e}") from e
+            error = f"{type(e).__name__}: {e}"
+            failed(error)
+            raise ModelCallFailed(error) from e
+        event(
+            "call_finished",
+            {
+                "input_tokens": reply.input_tokens,
+                "output_tokens": reply.output_tokens,
+                "reasoning_tokens": reply.reasoning_tokens,
+                "latency_ms": reply.latency_ms,
+                "cost_usd": reply.cost_usd,
+                "truncated": reply.truncated,
+                "error": None,
+            },
+        )
         self.cost = None if self.cost is None or reply.cost_usd is None else self.cost + reply.cost_usd
         return reply
+
+    def emit(self, kind: str, /, **data: Any) -> None:
+        """A plugin event for the viewer (arena watch), e.g. emit("graded", attempt=2, passed=False).
+
+        The data must be JSON-friendly. Never put a reply in it that some
+        player isn't meant to see yet: the viewer shows every event.
+        """
+        self.log.log_event(self.run_id, self.task_id, kind, data)
 
     def outcome(
         self,

@@ -58,6 +58,19 @@ CREATE TABLE IF NOT EXISTS results (
     score REAL,  -- 0.0-1.0; NULL in rows logged before plugins, where passed is the score
     metrics TEXT  -- JSON, whatever the plugin reports beyond the score
 );
+
+-- What happens in a run, for watching it live or replaying it (core/events.py).
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY,  -- also the cursor a viewer polls from
+    run_id INTEGER NOT NULL REFERENCES runs(id),
+    problem_id TEXT,  -- the task id; NULL for run_started and run_finished
+    ts TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    role TEXT,  -- call events only: the Session role_name
+    model TEXT,  -- call events only
+    data TEXT NOT NULL  -- JSON object
+);
+CREATE INDEX IF NOT EXISTS events_run ON events (run_id, id);
 """
 
 
@@ -84,6 +97,11 @@ class RunLog:
         path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(path)
         self.db.row_factory = sqlite3.Row
+        # WAL, so a viewer reading events in another process never blocks the run.
+        # The mode is stored in the file, so this only changes it once.
+        mode = self.db.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+        if mode != "wal":
+            raise RuntimeError(f"could not put {path} in WAL mode (got {mode!r})")
         self.db.executescript(SCHEMA)
         # Columns added after the first release; CREATE TABLE IF NOT EXISTS skips
         # existing tables, so add them to older databases here.
@@ -92,6 +110,7 @@ class RunLog:
             if column not in columns:
                 self.db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
         self.db.commit()
+        self.last_run_id: int | None = None  # the newest run this RunLog started
 
     def start_run(
         self,
@@ -109,6 +128,7 @@ class RunLog:
         )
         self.db.commit()
         assert cur.lastrowid is not None
+        self.last_run_id = cur.lastrowid
         return cur.lastrowid
 
     def finish_run(self, run_id: int, interrupted: bool = False) -> None:
@@ -195,6 +215,24 @@ class RunLog:
                 score,
                 json.dumps(metrics or {}),
             ),
+        )
+        self.db.commit()
+
+    def log_event(
+        self,
+        run_id: int,
+        task_id: str | None,
+        kind: str,
+        data: dict[str, Any],
+        role: str | None = None,
+        model: str | None = None,
+    ) -> None:
+        """One event, committed at once so a viewer sees it right away."""
+        self.db.execute(
+            "INSERT INTO events (run_id, problem_id, ts, kind, role, model, data)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            # default=str: an odd value in the data can't make logging fail
+            (run_id, task_id, utc_now(), kind, role, model, json.dumps(data, default=str)),
         )
         self.db.commit()
 

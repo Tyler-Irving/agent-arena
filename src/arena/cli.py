@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from arena.core.lineup import get_lineup
 from arena.core.orchestrator import format_cost, run_lineup
 from arena.core.plugin import Outcome, PluginError
-from arena.core.runlog import get_runlog
+from arena.core.runlog import DEFAULT_DB, get_runlog
 from arena.core.scoreboard import format_scoreboard, scoreboard
 from arena.core.taskboard import SqliteTaskBoard
 from arena.models.router import complete
@@ -20,6 +20,7 @@ from arena.plugins import DEFAULT_PLUGIN, PLUGINS, get_plugin
 
 SMOKE_MODELS = ["anthropic/claude-haiku-5-5", "ollama/qwen2.5-coder:14b"]
 SMOKE_SYSTEM = "You are a terse assistant."
+HIDE_ROLES_HELP = "mafia: hide each role until that player is out or the game ends"
 SMOKE_PROMPT = "Write a one-line Python expression that reverses the string s. Reply with only the code."
 
 
@@ -56,7 +57,9 @@ async def smoke(models: list[str]) -> int:
     return 1 if failures else 0
 
 
-async def run(lineup_name: str, problem: str | None, repeat: int) -> int:
+async def run(
+    lineup_name: str, problem: str | None, repeat: int, watch: bool = False, hide_roles: bool = False
+) -> int:
     try:
         lineup = get_lineup(lineup_name, PLUGINS, DEFAULT_PLUGIN)
     except KeyError as e:
@@ -79,26 +82,36 @@ async def run(lineup_name: str, problem: str | None, repeat: int) -> int:
     )
 
     board = SqliteTaskBoard()
-    summaries: list[tuple[int, list[Outcome]]] = []
-    try:
-        for _ in range(repeat):
-            try:
-                run_id, outcomes = await run_lineup(plugin, lineup, problems, board, get_runlog(), problem)
-            except PluginError as e:
-                print(f"{e.what} unavailable, run aborted: {e}", file=sys.stderr)
-                return 2
-            summaries.append((run_id, outcomes))
-            print(summarize(run_id, outcomes) + "\n")
-    finally:
-        # Also when stopped early, so the finished runs aren't lost in the scrollback.
-        if repeat > 1 and summaries:
-            first, last = summaries[0][0], summaries[-1][0]
-            done = f"{repeat}" if len(summaries) == repeat else f"{len(summaries)} of {repeat}"
-            print(f"{done} runs finished ({first}-{last}):")
-            for run_id, outcomes in summaries:
-                print("  " + summarize(run_id, outcomes))
-            print(f"compare with earlier runs: arena scoreboard --since {first}")
-    return 0
+    log = get_runlog()
+
+    async def runs() -> int:
+        summaries: list[tuple[int, list[Outcome]]] = []
+        try:
+            for _ in range(repeat):
+                try:
+                    run_id, outcomes = await run_lineup(plugin, lineup, problems, board, log, problem)
+                except PluginError as e:
+                    print(f"{e.what} unavailable, run aborted: {e}", file=sys.stderr)
+                    return 2
+                summaries.append((run_id, outcomes))
+                print(summarize(run_id, outcomes) + "\n")
+        finally:
+            # Also when stopped early, so the finished runs aren't lost in the scrollback.
+            if repeat > 1 and summaries:
+                first, last = summaries[0][0], summaries[-1][0]
+                done = f"{repeat}" if len(summaries) == repeat else f"{len(summaries)} of {repeat}"
+                print(f"{done} runs finished ({first}-{last}):")
+                for run_id, outcomes in summaries:
+                    print("  " + summarize(run_id, outcomes))
+                print(f"compare with earlier runs: arena scoreboard --since {first}")
+        return 0
+
+    if not watch:
+        return await runs()
+    from arena.watch.app import watch_run  # only --watch loads the viewer (and Rich)
+    from arena.watch.views import ViewOptions
+
+    return await watch_run(runs(), log, ViewOptions(hide_roles=hide_roles))
 
 
 def summarize(run_id: int, outcomes: list[Outcome]) -> str:
@@ -114,13 +127,15 @@ def summarize(run_id: int, outcomes: list[Outcome]) -> str:
     )
 
 
-def run_stoppable(command: Coroutine[Any, Any, int]) -> int:
+def run_stoppable(
+    command: Coroutine[Any, Any, int], stopped: str | None = "interrupted; anything unfinished is not scored"
+) -> int:
     """asyncio.run(command), stopping it cleanly on Ctrl-C or SIGTERM.
 
     The first signal cancels the command, so runs are closed and any sandbox
     container is killed. Later signals are ignored: cancelling that cleanup
     could leave a container running model-written code. Returns 128 + signal
-    number when stopped, the shell convention.
+    number when stopped, the shell convention, after printing `stopped` (if any).
     """
     received: list[signal.Signals] = []
 
@@ -145,7 +160,8 @@ def run_stoppable(command: Coroutine[Any, Any, int]) -> int:
     except asyncio.CancelledError:
         if not received:
             raise
-        print("\ninterrupted; anything unfinished is not scored", file=sys.stderr)
+        if stopped:
+            print(f"\n{stopped}", file=sys.stderr)
         return 128 + received[0]
 
 
@@ -164,6 +180,23 @@ def show_scoreboard(plugin: str, since: int | None) -> int:
         print(f"runs {since} and later\n")
     print(format_scoreboard(rows))
     return 0
+
+
+def watch(run_id: int | None, hide_roles: bool) -> int:
+    from arena.watch.app import attach
+    from arena.watch.views import ViewOptions
+
+    # Stoppable, so the live view is closed (and the cursor shown again) on Ctrl-C or SIGTERM.
+    # Only the viewer stops; the run it watches goes on.
+    return run_stoppable(attach(DEFAULT_DB, run_id, ViewOptions(hide_roles=hide_roles)), stopped=None)
+
+
+def replay(run_id: int, speed: float, hide_roles: bool) -> int:
+    from arena.watch.app import replay as play_back
+    from arena.watch.views import ViewOptions
+
+    options = ViewOptions(hide_roles=hide_roles)
+    return run_stoppable(play_back(DEFAULT_DB, run_id, speed, options), stopped=None)
 
 
 def main() -> None:
@@ -185,6 +218,28 @@ def main() -> None:
     p_run.add_argument(
         "--repeat", type=positive_int, default=1, help="run the problems this many times (default: 1)"
     )
+    p_run.add_argument("--watch", action="store_true", help="show a live view of the run")
+    p_run.add_argument("--hide-roles", action="store_true", help=HIDE_ROLES_HELP)
+
+    p_watch = sub.add_parser("watch", help="watch a run from another terminal")
+    p_watch.add_argument(
+        "run_id",
+        nargs="?",
+        type=positive_int,
+        metavar="RUN_ID",
+        help="default: the latest run if it is still going, else the next one to start",
+    )
+    p_watch.add_argument("--hide-roles", action="store_true", help=HIDE_ROLES_HELP)
+
+    p_replay = sub.add_parser("replay", help="replay a finished run")
+    p_replay.add_argument("run_id", type=positive_int, metavar="RUN_ID")
+    p_replay.add_argument(
+        "--speed",
+        type=non_negative_float,
+        default=1.0,
+        help="play back N times as fast; 0 shows only the final state (default: 1)",
+    )
+    p_replay.add_argument("--hide-roles", action="store_true", help=HIDE_ROLES_HELP)
 
     p_score = sub.add_parser("scoreboard", help="compare lineups across all runs")
     p_score.add_argument(
@@ -195,12 +250,25 @@ def main() -> None:
     )
 
     args = parser.parse_args()
+    if args.command == "run" and args.hide_roles and not args.watch:
+        p_run.error("--hide-roles only changes the --watch view; add --watch")
     if args.command == "smoke":
         sys.exit(run_stoppable(smoke(args.models or SMOKE_MODELS)))
     elif args.command == "run":
-        sys.exit(run_stoppable(run(args.lineup, args.problem, args.repeat)))
+        sys.exit(run_stoppable(run(args.lineup, args.problem, args.repeat, args.watch, args.hide_roles)))
+    elif args.command == "watch":
+        sys.exit(watch(args.run_id, args.hide_roles))
+    elif args.command == "replay":
+        sys.exit(replay(args.run_id, args.speed, args.hide_roles))
     elif args.command == "scoreboard":
         sys.exit(show_scoreboard(args.plugin, args.since))
+
+
+def non_negative_float(value: str) -> float:
+    n = float(value)
+    if not n >= 0:  # also rejects nan
+        raise argparse.ArgumentTypeError(f"must be at least 0, got {value}")
+    return n
 
 
 def positive_int(value: str) -> int:

@@ -10,6 +10,7 @@ orchestrator model decides whether to retry, replan, or give up.
 
 from typing import NamedTuple
 
+from arena.core.events import brief
 from arena.core.lineup import RoleConfig
 from arena.core.plugin import CallLimitReached, ModelCallFailed, Outcome, Session, model_note
 from arena.core.runlog import RunLog, utc_now
@@ -89,8 +90,18 @@ async def grade_reply(
             code=None,
             passed=False,
         )
+        session.emit(
+            "graded",
+            attempt=attempt,
+            passed=False,
+            tests_passed=None,
+            tests_total=None,
+            timed_out=None,
+            has_code=False,
+        )
         print(f"   attempt {attempt}: no code block in reply ({model_note(reply)})")
         return None
+    session.emit("grading", attempt=attempt)
     result = await grade(code, problem.path)
     log_attempt(
         session.log,
@@ -103,6 +114,15 @@ async def grade_reply(
         tests_total=result.tests_total,
         timed_out=result.timed_out,
         output=result.stdout + result.stderr,
+    )
+    session.emit(
+        "graded",
+        attempt=attempt,
+        passed=result.passed,
+        tests_passed=result.tests_passed,
+        tests_total=result.tests_total,
+        timed_out=result.timed_out,
+        has_code=True,
     )
     print(f"   attempt {attempt}: {roles.attempt_outcome(result)} ({model_note(reply)})")
     return Graded(code, result)
@@ -181,6 +201,7 @@ async def solve_team(
     try:
         reply = await ask("planner", roles.PLANNER_SYSTEM, roles.plan_task(prompt))
         plan = reply.text or "(no plan)"
+        session.emit("plan", plan=1, text=brief(plan))
         print(f"   plan ({model_note(reply)})")
         # The last graded attempt and what was wrong with it, kept until the
         # coder produces new code (a reply without code doesn't replace them).
@@ -214,6 +235,7 @@ async def solve_team(
                 "reviewer", roles.REVIEWER_SYSTEM, roles.review_task(prompt, plan, code, result)
             )
             review = reply.text or "(no feedback)"
+            session.emit("review", attempt=attempt, text=brief(review))
             print(f"   review ({model_note(reply)})")
 
             attempts_left = max_attempts - attempt
@@ -232,6 +254,14 @@ async def solve_team(
             history.append(
                 roles.PastAttempt(attempt, plan_number, roles.attempt_outcome(result), decision, decided)
             )
+            session.emit(
+                "decision",
+                attempt=attempt,
+                decision=decision.upper(),
+                parsed=decided,
+                reason=brief(roles.decision_reason(reply.text)) if decided else "no decision in reply",
+                attempts_left=attempts_left,
+            )
 
             if decision == "give_up":
                 stop_reason = "orchestrator gave up"
@@ -245,6 +275,7 @@ async def solve_team(
                 )
                 plan = reply.text or "(no plan)"
                 plan_number += 1
+                session.emit("replan", plan=plan_number, reason=brief(lead_reason), text=brief(plan))
                 print(f"   replan ({model_note(reply)})")
                 # New approach: start the coder fresh rather than anchoring it on the old code.
                 last_code, last_feedback = None, None

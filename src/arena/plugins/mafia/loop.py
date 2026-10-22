@@ -60,6 +60,8 @@ class MafiaGame:
     async def play(self) -> Outcome:
         for p in self.state.players:
             self.event("setup", 0, "role", p.name, None, p.role)
+        players = [{"seat": i + 1, "name": p.name, "role": p.role} for i, p in enumerate(self.state.players)]
+        self.session.emit("deal", players=players)
         n, side, ended, error = 0, None, "", None
         try:
             while True:
@@ -72,6 +74,7 @@ class MafiaGame:
                 if side := winner(self.state):
                     ended = f"day {n}"
                     break
+            self.session.emit("win", winner=side, ended=ended)
         except ModelCallFailed as e:
             error = str(e)
             print(f"   model call failed: {error}")
@@ -82,6 +85,7 @@ class MafiaGame:
 
     async def night(self, n: int) -> None:
         state = self.state
+        self.session.emit("phase", phase="night", n=n, step=None)
         targets = kill_targets(state)
         victim: str | None = None
         chooser = "random"  # who picked the victim; "random" if no mafia reply named a valid target
@@ -97,6 +101,8 @@ class MafiaGame:
             else:
                 self.invalid["target"] += 1
             proposal = roles.Proposal(m.name, choice.name, roles.one_line(reply))
+            if partner_decides:
+                self.session.emit("proposal", n=n, proposer=m.name, target=choice.name)
         if victim is None:
             victim = self.rng.choice(targets)  # every night kills, so every game ends
 
@@ -114,9 +120,13 @@ class MafiaGame:
             result = roles.check_result(n, checked, is_mafia)
             self.checks.append(result)  # the check resolves before the kill
             self.event("night", n, "check", detective.name, checked, result)
+            self.session.emit(
+                "check", n=n, detective=detective.name, target=checked, is_mafia=is_mafia if checked else None
+            )
 
         self.event("night", n, "kill", chooser, victim, None)
         dead = state.get(victim)
+        self.session.emit("kill", n=n, victim=victim, role=dead.role, by=chooser)
         dead.alive = False
         self.out.append({"name": dead.name, "role": dead.role, "when": f"night {n}"})
         print(f"   night {n}: {dead.name} killed ({dead.role})")
@@ -125,14 +135,18 @@ class MafiaGame:
     async def day(self, n: int) -> None:
         state = self.state
         speakers = speaking_order(state, n)
+        self.session.emit("phase", phase="day", n=n, step="speeches")
         for p in speakers:
             reply = await self.ask(p, roles.speech_task(n))
             text = roles.one_line(reply) or roles.SILENT
             self.public.append(roles.speech_line(n, p.name, text))
             self.event("day", n, "speech", p.name, None, text)
+            self.session.emit("speech", n=n, speaker=p.name, text=text)
 
         # Blind: nobody's vote is shared until everyone has voted.
+        self.session.emit("phase", phase="day", n=n, step="votes")
         votes: dict[str, str | None] = {}
+        invalid: list[str] = []
         for p in speakers:
             options = vote_targets(state, p)
             choice = parse_choice(
@@ -141,13 +155,19 @@ class MafiaGame:
             votes[p.name] = choice.name
             if not choice.valid:
                 self.invalid["vote"] += 1
+                invalid.append(p.name)
             if p.role != "mafia" and choice.name is not None:
                 self.town_votes += 1
                 self.town_votes_on_mafia += state.get(choice.name).role == "mafia"
             self.event("day", n, "vote", p.name, choice.name, None)
 
+        # Logged only now, with all of the day's votes, so the viewer keeps them blind too.
+        self.session.emit("votes", n=n, votes=votes, invalid=invalid)
         chosen = resolve_votes(votes, self.rng)
         eliminated = state.get(chosen) if chosen else None
+        self.session.emit(
+            "elimination", n=n, name=chosen, role=eliminated.role if eliminated is not None else None
+        )
         if eliminated is not None:
             eliminated.alive = False
             self.out.append({"name": eliminated.name, "role": eliminated.role, "when": f"day {n}"})

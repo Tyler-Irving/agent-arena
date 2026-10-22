@@ -1,11 +1,14 @@
 """The events table: what core and the plugins log for arena watch / replay, in order."""
 
 import asyncio
+import json
+import re
 import sqlite3
 from collections import Counter
+from pathlib import Path
 
 import pytest
-from scripted import CODE_BOUNTY, events, kinds, reply, run_bounty
+from scripted import CODE_BOUNTY, TOWN_WINS, events, kinds, play_mafia, reply, run_bounty
 
 from arena.core.events import EVENTS_VERSION, Event, brief
 from arena.core.runlog import RunLog
@@ -238,3 +241,216 @@ def test_brief_collapses_and_cuts() -> None:
     assert brief("  two\n lines  ") == "two lines"
     assert brief("x" * 10, 5) == "xxxx…"
     assert brief(None) == ""
+
+
+# --- plugin events -----------------------------------------------------------------
+
+
+def flow(evs: list[Event]) -> list[str]:
+    """Each call as its role, each plugin event as its kind (call_finished and core events left out)."""
+    return [
+        e.role or "" if e.kind == "call_started" else e.kind
+        for e in evs
+        if e.kind not in CORE - {"call_started"}
+    ]
+
+
+def test_solo_logs_grading_and_graded(monkeypatch, tmp_path) -> None:
+    log, run_id = run_bounty(monkeypatch, tmp_path, "solo", [reply("no code"), BAD, GOOD], [False, True])
+    evs = events(log, run_id)
+
+    assert flow(evs) == ["solo", "graded", "solo", "grading", "graded", "solo", "grading", "graded"]
+    graded = [e.data for e in evs if e.kind == "graded"]
+    no_grade = {"tests_passed": None, "tests_total": None, "timed_out": None}
+    assert graded[0] == {"attempt": 1, "passed": False, **no_grade, "has_code": False}
+    five_of_six = {"tests_passed": 5, "tests_total": 6, "timed_out": False}
+    assert graded[1] == {"attempt": 2, "passed": False, **five_of_six, "has_code": True}
+    assert graded[2]["passed"] is True and graded[2]["attempt"] == 3
+    assert [e.data for e in evs if e.kind == "grading"] == [{"attempt": 2}, {"attempt": 3}]
+
+
+def test_team_logs_plan_review_decision_and_replan(monkeypatch, tmp_path) -> None:
+    replies = {
+        "planner": [reply("brute force"), reply("use a\n  dict")],
+        "coder": [BAD, BAD, GOOD],
+        "reviewer": [reply("off by one"), reply("too slow")],
+        "orchestrator": [reply("DECISION: RETRY\nclose"), reply("DECISION: REPLAN\nwrong approach")],
+    }
+    log, run_id = run_bounty(monkeypatch, tmp_path, "team", replies, [False, False, True])
+    evs = events(log, run_id)
+
+    assert flow(evs) == [
+        "planner", "plan",
+        "coder", "grading", "graded", "reviewer", "review", "orchestrator", "decision",
+        "coder", "grading", "graded", "reviewer", "review", "orchestrator", "decision", "planner", "replan",
+        "coder", "grading", "graded",
+    ]  # fmt: skip
+    data = {
+        kind: [e.data for e in evs if e.kind == kind] for kind in ("plan", "review", "decision", "replan")
+    }
+    assert data["plan"] == [{"plan": 1, "text": "brute force"}]
+    assert data["review"] == [{"attempt": 1, "text": "off by one"}, {"attempt": 2, "text": "too slow"}]
+    assert data["decision"] == [
+        {"attempt": 1, "decision": "RETRY", "parsed": True, "reason": "close", "attempts_left": 2},
+        {"attempt": 2, "decision": "REPLAN", "parsed": True, "reason": "wrong approach", "attempts_left": 1},
+    ]
+    assert data["replan"] == [{"plan": 2, "reason": "wrong approach", "text": "use a dict"}]
+
+
+def test_unparseable_decision_is_logged_as_a_retry(monkeypatch, tmp_path) -> None:
+    replies = {
+        "planner": [reply("plan")],
+        "coder": [BAD, GOOD],
+        "reviewer": [reply("hm")],
+        "orchestrator": [reply("Let's try again.")],
+    }
+    log, run_id = run_bounty(monkeypatch, tmp_path, "team", replies, [False, True])
+    decision = next(e for e in events(log, run_id) if e.kind == "decision")
+    assert decision.data == {
+        "attempt": 1,
+        "decision": "RETRY",
+        "parsed": False,
+        "reason": "no decision in reply",
+        "attempts_left": 2,
+    }
+
+
+def test_mafia_game_logs_its_events_in_order(monkeypatch, tmp_path) -> None:
+    log, run_id = play_mafia(monkeypatch, tmp_path)
+    evs = events(log, run_id)
+
+    assert_paired(evs)
+    plugin_kinds = kinds(evs, None)
+    plugin_kinds = [k for k in plugin_kinds if k not in CORE]
+    day = ["phase", *["speech"] * 6, "phase", "votes", "elimination"]
+    assert plugin_kinds == [
+        "deal",
+        "phase", "proposal", "check", "kill",
+        *day,
+        "phase", "check", "kill",
+        "phase", *["speech"] * 4, "phase", "votes", "elimination",
+        "win",
+    ]  # fmt: skip
+    data = lambda kind: [e.data for e in evs if e.kind == kind]  # noqa: E731
+    assert data("deal")[0]["players"][:2] == [
+        {"seat": 1, "name": "Finley", "role": "villager"},
+        {"seat": 2, "name": "Blake", "role": "mafia"},
+    ]
+    assert data("phase")[:3] == [
+        {"phase": "night", "n": 1, "step": None},
+        {"phase": "day", "n": 1, "step": "speeches"},
+        {"phase": "day", "n": 1, "step": "votes"},
+    ]
+    assert data("proposal") == [{"n": 1, "proposer": "Blake", "target": "Finley"}]
+    assert data("check") == [
+        {"n": 1, "detective": "Avery", "target": "Blake", "is_mafia": True},
+        {"n": 2, "detective": "Avery", "target": "Emery", "is_mafia": True},
+    ]
+    assert data("kill") == [
+        {"n": 1, "victim": "Finley", "role": "villager", "by": "Emery"},
+        {"n": 2, "victim": "Casey", "role": "villager", "by": "Emery"},
+    ]
+    assert data("speech")[0] == {"n": 1, "speaker": "Blake", "text": "Blake speaks on day 1."}
+    votes = data("votes")[0]
+    assert votes["invalid"] == [] and votes["votes"]["Blake"] is None and votes["votes"]["Casey"] == "Blake"
+    assert data("elimination") == [
+        {"n": 1, "name": "Blake", "role": "mafia"},
+        {"n": 2, "name": "Emery", "role": "mafia"},
+    ]
+    assert data("win") == [{"winner": "town", "ended": "day 2"}]
+
+
+def test_proposal_comes_between_the_two_mafia_calls(monkeypatch, tmp_path) -> None:
+    log, run_id = play_mafia(monkeypatch, tmp_path)
+    night1 = flow(events(log, run_id))[: flow(events(log, run_id)).index("kill")]
+    assert night1 == ["deal", "phase", "mafia:Blake", "proposal", "mafia:Emery", "detective:Avery", "check"]
+
+
+def test_votes_are_logged_only_at_the_reveal(monkeypatch, tmp_path) -> None:
+    log, run_id = play_mafia(monkeypatch, tmp_path)
+    evs = events(log, run_id)
+
+    for day in (1, 2):
+        start = next(
+            i
+            for i, e in enumerate(evs)
+            if e.kind == "phase" and e.data == {"phase": "day", "n": day, "step": "votes"}
+        )
+        reveal = next(i for i, e in enumerate(evs) if e.kind == "votes" and e.data["n"] == day)
+        voting = evs[start + 1 : reveal]
+        # only the vote calls themselves, and they carry no reply text
+        assert set(kinds(voting)) == {"call_started", "call_finished"}
+        assert all("Blake" not in json.dumps(e.data) and "Emery" not in json.dumps(e.data) for e in voting)
+        voters = {e.role.split(":")[1] for e in voting if e.kind == "call_started" and e.role}
+        assert set(evs[reveal].data["votes"]) == voters
+        assert evs[reveal - 1].kind == "call_finished"  # right after the last vote
+    assert kinds(evs).count("votes") == 2
+
+
+def test_votes_list_invalid_replies_apart_from_none(monkeypatch, tmp_path) -> None:
+    log, run_id = play_mafia(monkeypatch, tmp_path, None)  # every reply unusable
+    votes = next(e.data for e in events(log, run_id) if e.kind == "votes")
+    assert votes["invalid"] == list(votes["votes"]) and set(votes["votes"].values()) == {None}
+
+    log, run_id = play_mafia(monkeypatch, tmp_path / "second", {**TOWN_WINS, "votes": {}})  # all vote none
+    votes = next(e.data for e in events(log, run_id) if e.kind == "votes")
+    assert votes["invalid"] == [] and set(votes["votes"].values()) == {None}
+    elimination = next(e.data for e in events(log, run_id) if e.kind == "elimination")
+    assert elimination == {"n": 1, "name": None, "role": None}
+
+
+# --- events change nothing else ----------------------------------------------------
+
+VARYING = {"started_at", "finished_at", "created_at", "updated_at", "wall_time_ms"}
+
+
+def dump(path: Path) -> dict[str, list[dict]]:
+    """Every table but events, without the columns that differ from run to run."""
+    db = sqlite3.connect(path)
+    db.row_factory = sqlite3.Row
+    tables = [
+        r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name != 'events'")
+    ]
+    return {
+        t: [
+            {k: row[k] for k in row.keys() if k not in VARYING}
+            for row in db.execute(f"SELECT * FROM {t} ORDER BY id")
+        ]
+        for t in sorted(tables)
+    }
+
+
+SCRIPTS = {
+    "solo": lambda mp, tmp: run_bounty(mp, tmp, "solo", [reply("x"), BAD, GOOD], [False, True]),
+    "team": lambda mp, tmp: run_bounty(
+        mp,
+        tmp,
+        "team",
+        {
+            "planner": [reply("brute force"), reply("use a dict")],
+            "coder": [BAD, BAD, GOOD],
+            "reviewer": [reply("off by one"), reply("too slow")],
+            "orchestrator": [reply("DECISION: RETRY\nclose"), reply("DECISION: REPLAN\nwrong")],
+        },
+        [False, False, True],
+    ),
+    "mafia": lambda mp, tmp: play_mafia(mp, tmp),
+    "mafia-unusable": lambda mp, tmp: play_mafia(mp, tmp, None),
+}
+
+
+@pytest.mark.parametrize("script", SCRIPTS)
+def test_events_change_no_output_or_other_rows(monkeypatch, tmp_path, capsys, script: str) -> None:
+    SCRIPTS[script](monkeypatch, tmp_path / "with")
+    with_events = capsys.readouterr()
+    with monkeypatch.context() as m:
+        m.setattr(RunLog, "log_event", lambda *args, **kwargs: None)
+        SCRIPTS[script](m, tmp_path / "without")
+    without_events = capsys.readouterr()
+
+    seconds = re.compile(r"\d+\.\ds$", re.MULTILINE)  # wall time, the one thing that varies
+    assert seconds.sub("Ns", with_events.out) == seconds.sub("Ns", without_events.out)
+    assert with_events.err == without_events.err
+    assert dump(tmp_path / "with" / "arena.db") == dump(tmp_path / "without" / "arena.db")
+    assert len(events(RunLog(tmp_path / "with" / "arena.db"), 1)) > 0
+    assert len(events(RunLog(tmp_path / "without" / "arena.db"), 1)) == 0

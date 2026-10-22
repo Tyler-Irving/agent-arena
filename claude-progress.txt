@@ -3,8 +3,9 @@
 ## Start here
 - Build order: steps 1-8 DONE and merged to main, tagged step-1-router .. step-8-mafia
   (step 7 = PR #13 plugin interface, tag step-7-plugins; step 8 = PR #14 Mafia plugin, tag step-8-mafia).
-- Nothing in progress. Next candidates: a Mafia report, Sonnet Mafia games (need the user's OK), see
-  "Mafia plugin" below.
+- Nothing in progress. Next candidate: a Mafia report, plus more games per lineup (one game each so far),
+  see "Mafia matchups" below. Paid runs (anthropic/*) need the user's OK; auto mode blocks them, so the
+  user may run them with `! uv run arena run ...`.
 - GitHub: https://github.com/Tyler-Irving/agent-arena (private). main has steps 1-8, merged
   through one PR per step; each step's tag points at its PR's merge commit (from step 6 on).
 - Run /code-review before any PR.
@@ -159,8 +160,24 @@
 - run 29 mafia-gptoss game-02 (after the fixes): TOWN WON on day 2, 29 calls, 175 s. The deciding mafia
   overrode the partner's proposal (Drew -> Blake); kill event credits it correctly; no multi-line speeches.
 - Merged as PR #14 (c03ef45), tagged step-8-mafia; branch feat/mafia deleted.
-- Next ideas, not done: a Mafia report (win rate by side / model across seats), mafia-sonnet-vs-haiku and
-  mafia-haiku-vs-sonnet games (need the user's OK, ~$0.45 each est.), several runs per lineup for noise.
+- Next ideas, not done: a Mafia report (win rate by side / model across seats), several games per lineup
+  for noise.
+
+## Mafia matchups on game-01 (runs 27-31, 2026-10-21; one game each, so noise, not evidence)
+Same deal every time: Blake + Emery mafia, Avery detective (game-01).
+| run | lineup                 | mafia   | town    | result             | calls | cost    |
+| 27  | mafia-gptoss           | gpt-oss | gpt-oss | MAFIA WON night 2  | 21    | $0      |
+| 28  | mafia-haiku            | Haiku   | Haiku   | TOWN WON day 2     | 29    | $0.0100 |
+| 30  | mafia-sonnet-vs-haiku  | Sonnet  | Haiku   | MAFIA WON night 2  | 20    | $0.0394 |
+| 31  | mafia-haiku-vs-sonnet  | Haiku   | Sonnet  | TOWN WON day 2     | 29    | $0.1244 |
+(run 29 = mafia-gptoss on game-02 after the review fixes: TOWN WON day 2.)
+- run 30: both Sonnet mafia posed as calm villagers; town voted out its own detective (Avery, who hadn't
+  claimed) 4-1-1 with both mafia on the bandwagon. Avery and Drew had the right reads.
+- run 31: Sonnet town reasoned from the revealed votes: on day 2 Emery was the only living player who
+  hadn't voted Blake and had voted the same target as Blake (Finley, killed that night). Avery claimed
+  with two "not mafia" checks. Town votes on mafia 6/7. Sonnet: 16 calls, $0.1209; Haiku 13, $0.0035.
+- All four games: zero invalid replies, leak audit clean (no narrator-only text, partner info or check
+  results in the wrong prompts). Total spent on Mafia so far: $0.17.
 
 ## Mafia gaps (core assumptions Mafia would still hit; not fixed yet)
 1. PARTLY: score = 1.0 if town won (decided). Still open: one Mafia lineup plays both sides, so define it (e.g. 1.0 = town won). The

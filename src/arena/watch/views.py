@@ -86,6 +86,8 @@ def epoch(ts: str) -> float:
 
 
 def seconds(s: float) -> str:
+    """A duration. Never negative: under WSL2 the wall clock is sometimes stepped back mid-run."""
+    s = max(0.0, s)
     return f"{s:.0f}s" if s >= 10 else f"{s:.1f}s"
 
 

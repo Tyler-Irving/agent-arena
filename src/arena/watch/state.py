@@ -45,7 +45,7 @@ class RunState:
     calls: list[CallRow] = field(default_factory=list)
 
     def apply(self, e: Event) -> None:
-        # Never backwards, even if the timestamps were (an older run, a clock step).
+        # Never backwards, even if the timestamps go back (WSL2 steps its wall clock back at times).
         self.last_at = max(epoch(e.ts), self.last_at or 0.0)
         if e.kind == "run_started":
             if e.data.get("events_version") != EVENTS_VERSION:

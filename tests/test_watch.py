@@ -441,3 +441,14 @@ def test_viewer_is_only_loaded_by_the_commands_that_use_it() -> None:
     )
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True).stdout
     assert out.strip() == "[]"
+
+
+def test_a_wall_clock_stepped_back_never_shows_negative_or_moves_back(monkeypatch, tmp_path) -> None:
+    log, run_id = run_bounty(monkeypatch, tmp_path, "solo", [GOOD], [True])
+    evs = events(log, run_id)
+    later = evs[2].model_copy(update={"ts": "2000-01-01T00:00:00+00:00"})  # stepped far back
+    state = RunState()
+    for e in [*evs[:2], later]:
+        state.apply(e)
+    assert state.last_at == epoch(evs[1].ts)
+    assert views.seconds(-3.4) == "0.0s"

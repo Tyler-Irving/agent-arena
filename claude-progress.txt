@@ -1,17 +1,17 @@
 # claude-progress.txt — session state (updated 2026-10-21)
 
 ## Start here
-- Build order: steps 1-7 DONE and merged to main (tags step-1-router .. step-6-problems; step 7 =
-  PR #13, plugin interface; user tags step-7-plugins).
-- In progress: Mafia plugin on branch feat/mafia. Approved plan, step by step with a stop after each:
-  ~/.claude/plans/indexed-pondering-twilight.md (see "Mafia plugin" below).
-- GitHub: https://github.com/Tyler-Irving/agent-arena (private). main has steps 1-6, merged
-  through one PR per step; build steps are tagged step-1-router .. step-6-problems.
+- Build order: steps 1-8 DONE and merged to main, tagged step-1-router .. step-8-mafia
+  (step 7 = PR #13 plugin interface, tag step-7-plugins; step 8 = PR #14 Mafia plugin, tag step-8-mafia).
+- Nothing in progress. Next candidates: a Mafia report, Sonnet Mafia games (need the user's OK), see
+  "Mafia plugin" below.
+- GitHub: https://github.com/Tyler-Irving/agent-arena (private). main has steps 1-8, merged
+  through one PR per step; each step's tag points at its PR's merge commit (from step 6 on).
 - Run /code-review before any PR.
 - Docker Desktop must be running. In WSL, /usr/bin/docker is a stub until it starts.
   Start from WSL: cmd.exe /c start "" "C:\Program Files\Docker\Docker\Docker Desktop.exe"
 - Verify the state before changing anything:
-    uv run ruff check src tests && uv run ruff format --check src tests && uv run pyright src tests && uv run pytest -q   # 121 passing
+    uv run ruff check src tests && uv run ruff format --check src tests && uv run pyright src tests && uv run pytest -q   # 175 passing
     uv run arena scoreboard
 
 ## What exists
@@ -101,7 +101,7 @@
 - Ideas, not done: replan sooner (after one failed retry), or make the coder start fresh on
   RETRY too; 009 (cron) stays hard for qwen14b whatever the plan
 
-## Plugin interface (branch refactor/plugin-interface, 2026-10-21)
+## Plugin interface (PR #13, merged 2026-10-21, tag step-7-plugins)
 - code_bounty is one plugin behind core/plugin.py; `grep -r code_bounty src/arena/core` is empty and
   tests/test_plugin.py checks that importing core loads no arena.plugins module. A fake "duel" plugin
   runs through run_lineup in tests. Prompts, loops, limits and printed output unchanged (a scripted fake
@@ -120,7 +120,7 @@
   was ever aborted, so the scoreboard is unchanged); run_lineup checks mode + roles of directly built
   lineups (check_roles); `arena run` prints invalid lineup config errors and exits 2, no traceback.
 
-## Mafia plugin (branch feat/mafia, started 2026-10-21)
+## Mafia plugin (PR #14, merged 2026-10-21, tag step-8-mafia)
 - Decisions: code enforces rules, LLM narrator is flavor only and players never see its text; one speech
   round in seat order (first speaker rotates daily), then blind votes revealed together; score = 1.0 if
   town won, metrics JSON for the rest, Mafia report later; at most one Ollama model per lineup; seeds come
@@ -158,7 +158,7 @@
   user's flavor-only choice), per-event commits (same as the rest of the run log). 175 tests.
 - run 29 mafia-gptoss game-02 (after the fixes): TOWN WON on day 2, 29 calls, 175 s. The deciding mafia
   overrode the partner's proposal (Drew -> Blake); kill event credits it correctly; no multi-line speeches.
-- PR open for feat/mafia; user tags step-8-mafia after merge.
+- Merged as PR #14 (c03ef45), tagged step-8-mafia; branch feat/mafia deleted.
 - Next ideas, not done: a Mafia report (win rate by side / model across seats), mafia-sonnet-vs-haiku and
   mafia-haiku-vs-sonnet games (need the user's OK, ~$0.45 each est.), several runs per lineup for noise.
 

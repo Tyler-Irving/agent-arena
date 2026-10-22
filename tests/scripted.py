@@ -131,11 +131,15 @@ def mafia_complete(script: dict | None, seen: list[tuple[str, str]] | None = Non
 
 
 def play_mafia(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, script: dict | None = TOWN_WINS, game: str = "01"
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    script: dict | None = TOWN_WINS,
+    game: str = "01",
+    roles: dict[str, str] | None = None,
 ) -> tuple[RunLog, int]:
     monkeypatch.setattr(core_plugin, "complete", mafia_complete(script))
     lineup = Lineup.model_validate(
-        {"name": "mafia-fake", "plugin": "mafia", "mode": "game", "roles": MAFIA_ROLES}
+        {"name": "mafia-fake", "plugin": "mafia", "mode": "game", "roles": roles or MAFIA_ROLES}
     )
     log = RunLog(tmp_path / "arena.db")
     board = SqliteTaskBoard(tmp_path / "arena.db")

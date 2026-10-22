@@ -6,6 +6,7 @@ read back later like a transcript. Plugins add their own tables (Plugin.schema).
 
 import json
 import sqlite3
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -111,6 +112,7 @@ class RunLog:
                 self.db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
         self.db.commit()
         self.last_run_id: int | None = None  # the newest run this RunLog started
+        self._anchor = (time.time(), time.monotonic())  # see event_time
 
     def start_run(
         self,
@@ -129,6 +131,7 @@ class RunLog:
         self.db.commit()
         assert cur.lastrowid is not None
         self.last_run_id = cur.lastrowid
+        self._anchor = (time.time(), time.monotonic())
         return cur.lastrowid
 
     def finish_run(self, run_id: int, interrupted: bool = False) -> None:
@@ -232,9 +235,19 @@ class RunLog:
             "INSERT INTO events (run_id, problem_id, ts, kind, role, model, data)"
             " VALUES (?, ?, ?, ?, ?, ?, ?)",
             # default=str: an odd value in the data can't make logging fail
-            (run_id, task_id, utc_now(), kind, role, model, json.dumps(data, default=str)),
+            (run_id, task_id, self.event_time(), kind, role, model, json.dumps(data, default=str)),
         )
         self.db.commit()
+
+    def event_time(self) -> str:
+        """Wall-clock time at the run's start plus monotonic time since, as an ISO timestamp.
+
+        Under WSL2 the wall clock can jump seconds forward and back mid-run (VM
+        time sync), which would make replay gaps and elapsed times wrong. A
+        monotonic clock keeps every gap between events right.
+        """
+        wall, mono = self._anchor
+        return datetime.fromtimestamp(wall + time.monotonic() - mono, UTC).isoformat()
 
 
 _default: RunLog | None = None

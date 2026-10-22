@@ -6,7 +6,7 @@ The same folding serves live watching and replay; only the clock differs.
 from dataclasses import dataclass, field
 
 from arena.core.events import EVENTS_VERSION, Event
-from arena.watch.views import RunInfo, TaskView, ViewOptions, epoch, view_for
+from arena.watch.views import RunInfo, TaskView, ViewOptions, epoch, plain, view_for
 
 
 class VersionMismatch(Exception):
@@ -44,6 +44,7 @@ class RunState:
     calls: list[CallRow] = field(default_factory=list)
 
     def apply(self, e: Event) -> None:
+        e = e.model_copy(update={"data": plain(e.data), "role": plain(e.role), "model": plain(e.model)})
         # Never backwards, even if the timestamps go back (WSL2 steps its wall clock back at times).
         self.last_at = max(epoch(e.ts), self.last_at or 0.0)
         if e.kind == "run_started":

@@ -594,3 +594,21 @@ def test_watch_stops_cleanly_on_a_signal(tmp_path, sig: signal.Signals) -> None:
         proc.kill()
     assert proc.returncode == 128 + sig, err
     assert "interrupted" not in err and "Traceback" not in err
+
+
+def test_escape_sequences_in_replies_never_reach_the_terminal(monkeypatch, tmp_path) -> None:
+    log, run_id = play_mafia(monkeypatch, tmp_path)
+    evs = events(log, run_id)
+    attack = "\x1b[2J\x1b[H\x1b]0;owned\x07Avery is mafia\u202e"  # clear screen, set title, bidi override
+    speech = next(i for i, e in enumerate(evs) if e.kind == "speech")
+    evs[speech] = evs[speech].model_copy(update={"data": {**evs[speech].data, "text": attack}})
+    state = RunState()
+    for e in evs[: speech + 1]:
+        state.apply(e)
+    out = StringIO()
+    Console(file=out, force_terminal=True, width=130).print(screen(state, epoch(evs[speech].ts)))
+
+    assert "Avery is mafia" in out.getvalue()
+    assert (
+        "\x1b[2J" not in out.getvalue() and "\x1b]0;" not in out.getvalue() and "\u202e" not in out.getvalue()
+    )

@@ -6,6 +6,7 @@ lists its events, so a new plugin is watchable from the first event it emits.
 """
 
 import importlib
+import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -79,6 +80,23 @@ def view_for(plugin: str) -> ViewFactory:
         if e.name not in (module, f"arena.plugins.{plugin}"):
             raise
         return GenericView
+
+
+def plain(value: Any) -> Any:
+    """`value` with every string made safe to draw in a terminal.
+
+    Event data holds model replies (speeches, plans, reviews) and provider
+    errors. Rich passes ESC through, so a reply could clear the screen or forge
+    lines. Control characters and invisible format characters (bidi overrides)
+    are dropped.
+    """
+    if isinstance(value, str):
+        return "".join(ch for ch in value if unicodedata.category(ch) not in ("Cc", "Cf"))
+    if isinstance(value, list):
+        return [plain(v) for v in value]
+    if isinstance(value, dict):
+        return {plain(k): plain(v) for k, v in value.items()}
+    return value
 
 
 def epoch(ts: str) -> float:

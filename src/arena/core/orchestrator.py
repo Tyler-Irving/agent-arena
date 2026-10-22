@@ -12,7 +12,7 @@ import os
 import time
 from typing import Any
 
-from arena.core.events import EVENTS_VERSION
+from arena.core.events import EVENTS_VERSION, boot_id
 from arena.core.lineup import Lineup, check_roles
 from arena.core.plugin import ModelCallFailed, Outcome, Plugin, PluginError, Session, TaskSpec
 from arena.core.runlog import RunLog, set_runlog
@@ -68,6 +68,7 @@ async def run_lineup[T: TaskSpec](
         "run_started",
         events_version=EVENTS_VERSION,
         pid=os.getpid(),  # so a viewer can tell a killed run from a slow one
+        boot=boot_id(),
         lineup=lineup.name,
         plugin=plugin.name,
         mode=lineup.mode,
@@ -140,19 +141,19 @@ async def run_lineup[T: TaskSpec](
         # Ctrl-C or SIGTERM, at any await. The half-done task gets no
         # result row, and its board entry shouldn't be left "running" forever.
         interrupted = True
+        if session is not None:  # before the await, which a second stop could cut short
+            cut_short("interrupted", "interrupted")
         if claimed is not None:
             await board.fail(claimed.id, "interrupted")
-        if session is not None:
-            cut_short("interrupted", "interrupted")
         raise
     except Exception as e:
         # A broken sandbox, or a bug. The run stopped short, so it mustn't
         # count as a full run, and no task should be left "running".
         interrupted = True
+        if session is not None:  # before the await, which Ctrl-C could cut short
+            cut_short("error", f"{type(e).__name__}: {e}")
         if claimed is not None:
             await board.fail(claimed.id, f"{type(e).__name__}: {e}")
-        if session is not None:
-            cut_short("error", f"{type(e).__name__}: {e}")
         raise
     finally:
         log.finish_run(run_id, interrupted=interrupted)

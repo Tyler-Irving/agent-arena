@@ -16,13 +16,14 @@ from pathlib import Path
 from rich.console import Console
 from rich.live import Live
 
-from arena.core.events import Event, latest_event_run, read_events
+from arena.core.events import Event, boot_id, latest_event_run, read_events
 from arena.core.runlog import RunLog
 from arena.watch.render import screen
 from arena.watch.state import RunState, VersionMismatch
 from arena.watch.views import ViewOptions, epoch
 
 POLL_S = 0.25
+FIRST_EVENT_POLLS = 8  # how long `arena watch RUN_ID` waits for a just-started run's first event
 NO_EVENTS = "run {} has no events (runs from before events were added, and smoke runs, have none)"
 
 
@@ -30,8 +31,12 @@ class WatchError(Exception):
     """Nothing to show: no database, no such run, no events, an unknown event format."""
 
 
-def open_readonly(path: Path) -> sqlite3.Connection:
-    """The run database, read-only, so a viewer can never change or create it."""
+def open_readonly(path: Path, immutable_ok: bool = False) -> sqlite3.Connection:
+    """The run database, read-only, so a viewer can never change or create it.
+
+    `immutable_ok`: for replay only. An immutable connection never sees later
+    writes, so a viewer following a run can't use one.
+    """
     if not path.exists():
         raise WatchError(f"no database at {path}")
     uri = path.resolve().as_uri() + "?mode=ro"
@@ -43,7 +48,7 @@ def open_readonly(path: Path) -> sqlite3.Connection:
         # connection can create only in a writable directory. Without a -wal
         # file nobody is writing the database, so it is safe to read as immutable.
         db.close()
-        if Path(f"{path}-wal").exists():
+        if not immutable_ok or Path(f"{path}-wal").exists():
             raise
         db = sqlite3.connect(uri + "&immutable=1", uri=True)
     return db
@@ -59,16 +64,23 @@ def has_events(db: sqlite3.Connection) -> bool:
     return table is not None
 
 
+def run_closed(db: sqlite3.Connection, run_id: int) -> bool:
+    row = db.execute("SELECT finished_at FROM runs WHERE id = ?", (run_id,)).fetchone()
+    return row is not None and row[0] is not None
+
+
 def run_ended(db: sqlite3.Connection, run_id: int) -> bool:
     """Whether the run's process finished it (runs.finished_at), or is gone without doing so (killed)."""
-    row = db.execute("SELECT finished_at FROM runs WHERE id = ?", (run_id,)).fetchone()
-    if row is not None and row[0] is not None:
+    if run_closed(db, run_id):
         return True
     started = db.execute(
         "SELECT data FROM events WHERE run_id = ? AND kind = 'run_started' LIMIT 1", (run_id,)
     ).fetchone()
-    pid = json.loads(started[0]).get("pid") if started else None
-    return pid is not None and not process_alive(pid)
+    data = json.loads(started[0]) if started else {}
+    if data.get("pid") is None:
+        return False
+    # A pid from an earlier boot (WSL restarted) may belong to some other process now.
+    return data.get("boot") != boot_id() or not process_alive(data["pid"])
 
 
 def process_alive(pid: int) -> bool:
@@ -196,10 +208,14 @@ async def pick_run(db: sqlite3.Connection, run_id: int | None, console: Console,
     if run_id is not None:
         if not run_exists(db, run_id):
             raise WatchError(f"no run {run_id}")
-        has_any = has_events(db) and db.execute("SELECT 1 FROM events WHERE run_id = ?", (run_id,)).fetchone()
-        if not has_any:
-            raise WatchError(NO_EVENTS.format(run_id))
-        return run_id
+        # A run that has just started writes its runs row a moment before its first event.
+        for _ in range(FIRST_EVENT_POLLS):
+            if has_events(db) and db.execute("SELECT 1 FROM events WHERE run_id = ?", (run_id,)).fetchone():
+                return run_id
+            if run_closed(db, run_id):
+                break
+            await asyncio.sleep(poll_s)
+        raise WatchError(NO_EVENTS.format(run_id))
     latest = latest_event_run(db) if has_events(db) else None
     if latest is not None and not run_ended(db, latest):
         return latest
@@ -227,7 +243,7 @@ async def replay(
     """Play a run's events back, with the gaps between them divided by `speed` (0: final frame only)."""
     console = console or Console()
     try:
-        db = open_readonly(path)
+        db = open_readonly(path, immutable_ok=True)
         if not run_exists(db, run_id):
             raise WatchError(f"no run {run_id}")
         events = read_events(db, run_id) if has_events(db) else []

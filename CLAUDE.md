@@ -120,7 +120,7 @@ class Plugin[T: TaskSpec](Protocol):   # TaskSpec: anything with an `id: str`
 ### Events (what `arena watch` shows)
 
 Every step of a run is a row in `events`, committed as it happens. The database is in WAL mode, so a viewer in another process never blocks the run. Core logs:
-- `run_started`: events_version, pid (so a viewer can tell a killed run from a slow one), lineup, plugin, mode, roles, tasks, selector, max_attempts, settings, max_calls
+- `run_started`: events_version, pid and boot (so a viewer can tell a killed run from a slow one), lineup, plugin, mode, roles, tasks, selector, max_attempts, settings, max_calls
 - `task_started`: index, total
 - `call_started` and `call_finished`: from Session.call, with tokens, latency, cost, truncated and error ("interrupted" on Ctrl-C), but never the reply text
 - `task_finished`: status done/failed/error/interrupted, verdict, score, reason, calls, cost, wall time
@@ -132,7 +132,7 @@ A plugin logs its own steps with `session.emit(kind, **data)`:
 - code_bounty: grading, graded, plan, review, decision, replan
 - mafia: deal, phase, proposal, check, kill, speech, votes (once, after the day's last vote, with `invalid`), elimination, win
 
-Data must be JSON-friendly and must never hold anything some agent isn't meant to see yet, since the viewer shows every event. Changing an event's shape means bumping `EVENTS_VERSION` in `core/events.py`. The viewer refuses runs with another version ("run N uses event format vX, this viewer reads v1").
+Data must be JSON-friendly and must never hold anything some agent isn't meant to see yet, since the viewer shows every event. Event strings can hold model replies: the viewer strips control characters from them (`watch.views.plain`, in `RunState.apply`), and a view draws them only with `rich.text.Text`, never as a plain `str` table cell, which Rich would parse as markup. Changing an event's shape means bumping `EVENTS_VERSION` in `core/events.py`. The viewer refuses runs with another version ("run N uses event format vX, this viewer reads v1").
 
 ### Adding a plugin
 
@@ -258,10 +258,10 @@ uv run arena scoreboard --plugin mafia     # pass = town win rate
 uv run arena run --lineup X --watch        # live view; the usual lines still print above it
 uv run arena watch [RUN_ID]                # attach read-only from another terminal (default: the run in progress, else the next)
 uv run arena replay RUN_ID [--speed N]     # gaps divided by N; 0 = final frame only; exits 2 for runs with no events
-uv run arena replay RUN_ID --hide-roles    # Mafia: hide each role until that player is out or the game ends
+uv run arena replay RUN_ID --hide-roles    # Mafia: hide each role until that player is out or the game ends (on run, needs --watch)
 ```
 
-Back up the database with `sqlite3 data/arena.db ".backup <file>"`, not `cp`: in WAL mode recent writes can still be in `arena.db-wal`.
+Back up the database with `sqlite3 data/arena.db ".backup <file>"`, not `cp`: in WAL mode recent writes can still be in `arena.db-wal`. On a filesystem without WAL support the run log prints a note and keeps its journal mode; runs work, but a viewer may make them wait.
 
 ## Build order
 

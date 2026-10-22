@@ -34,7 +34,7 @@ class MafiaView:
         self.votes: dict[str, str | None] = {}  # the last revealed votes
         self.invalid: set[str] = set()
         self.speech: tuple[str, str] | None = None  # (speaker, text)
-        self.facts: list[str] = []
+        self.facts: list[tuple[str, dict]] = []  # (kind, data) of checks, kills and eliminations
         self.proposal: dict | None = None
         self.over = False  # game over (won, or the task ended): every role is revealed
         self.result: str | None = None
@@ -58,24 +58,19 @@ class MafiaView:
         elif e.kind == "proposal":
             self.proposal = d
         elif e.kind == "check":
-            if not self.hide:
-                target = d["target"]
-                result = f"{target}: {'mafia' if d['is_mafia'] else 'not mafia'}" if target else "wasted"
-                self.facts.append(f"night {d['n']}: {d['detective']} checked {result}")
+            self.facts.append(("check", d))
         elif e.kind == "kill":
             self.out[d["victim"]] = f"✝ night {d['n']}"
-            self.facts.append(self.kill_fact(d))
+            self.facts.append(("kill", {**d, "proposal": self.proposal}))
             self.proposal = None
         elif e.kind == "speech":
             self.speech = (d["speaker"], d["text"])
         elif e.kind == "votes":
             self.votes, self.invalid = d["votes"], set(d["invalid"])
         elif e.kind == "elimination":
-            if d["name"] is None:
-                self.facts.append(f"day {d['n']}: no one voted out")
-            else:
+            if d["name"] is not None:
                 self.out[d["name"]] = f"✗ out day {d['n']}"
-                self.facts.append(f"day {d['n']}: {d['name']} ({d['role']}) voted out")
+            self.facts.append(("elimination", d))
         elif e.kind == "win":
             self.over = True
             self.result = f"{d['winner'].upper()} WON on {d['ended']}"
@@ -84,15 +79,25 @@ class MafiaView:
             self.calling = None
             self.result = self.result or e.data.get("verdict") or e.data.get("reason")
 
-    def kill_fact(self, d: dict) -> str:
+    def fact(self, kind: str, d: dict) -> str | None:
+        """A fact line, or None if --hide-roles still hides it. Decided when drawn, so the end shows all."""
+        hidden = self.hide and not self.over
+        if kind == "check":
+            if hidden:
+                return None
+            target = d["target"]
+            result = f"{target}: {'mafia' if d['is_mafia'] else 'not mafia'}" if target else "wasted"
+            return f"night {d['n']}: {d['detective']} checked {result}"
+        if kind == "elimination":
+            if d["name"] is None:
+                return f"day {d['n']}: no one voted out"
+            return f"day {d['n']}: {d['name']} ({d['role']}) voted out"
         killed = f"{d['victim']} ({d['role']}) killed"
-        if self.hide:
+        if hidden:
             return f"night {d['n']}: {killed}"
-        p = self.proposal
-        if p is not None:
-            proposed = f"{p['proposer']} proposed {p['target'] or 'no one valid'}, "
-            return f"night {d['n']}: {proposed}{d['by']} chose {d['victim']} · {killed}"
-        return f"night {d['n']}: {d['by']} chose {d['victim']} · {killed}"
+        p = d["proposal"]
+        proposed = f"{p['proposer']} proposed {p['target'] or 'no one valid'}, " if p else ""
+        return f"night {d['n']}: {proposed}{d['by']} chose {d['victim']} · {killed}"
 
     # --- hiding ---
 
@@ -116,7 +121,8 @@ class MafiaView:
         lines: list[RenderableType] = [self.title(now), self.table(now)]
         if self.speech is not None:
             lines.append(Text(f"last speech: {self.speech[0]}: {brief(self.speech[1], 90)}"))
-        for fact in self.facts[-2:]:
+        shown = [f for kind, d in self.facts if (f := self.fact(kind, d)) is not None]
+        for fact in shown[-2:]:
             lines.append(Text(f"fact: {fact}"))
         if self.result:
             lines.append(Text(self.result, style="bold"))

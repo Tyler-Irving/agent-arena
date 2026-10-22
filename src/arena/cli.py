@@ -250,6 +250,8 @@ def main() -> None:
     )
 
     args = parser.parse_args()
+    if args.command == "run" and args.hide_roles and not args.watch:
+        p_run.error("--hide-roles only changes the --watch view; add --watch")
     if args.command == "smoke":
         sys.exit(run_stoppable(smoke(args.models or SMOKE_MODELS)))
     elif args.command == "run":

@@ -8,7 +8,7 @@ from rich.table import Table
 from rich.text import Text
 
 from arena.core.events import Event, brief
-from arena.watch.views import RunInfo, ViewOptions, epoch, seconds
+from arena.watch.views import RunInfo, ViewOptions, epoch, seconds, short_model
 
 TEAM = ["planner", "coder", "grader", "reviewer", "orchestrator"]
 SOLO = ["solo", "grader"]
@@ -20,9 +20,10 @@ class CodeBountyView:
         self.task_id = task_id
         self.solo = run.mode == "solo"
         self.stages = SOLO if self.solo else TEAM
-        self.models = {**{r: m.split("/", 1)[-1] for r, m in run.roles.items()}, "grader": "docker"}
+        self.models = {**{r: short_model(m) for r, m in run.roles.items()}, "grader": "docker"}
         self.max_attempts = run.max_attempts
-        self.attempt = 0  # the attempt being written or graded
+        self.attempt = 0  # the latest attempt number from grading/graded: the plugin's own count
+        self.writing = False  # a coder (or solo) call is in flight, writing the next attempt
         self.plan = 0
         self.marks: dict[str, str] = {}  # stage -> done | failed | flight
         self.since: dict[str, float] = {}  # stage in flight -> when it started
@@ -35,8 +36,11 @@ class CodeBountyView:
         stage = (
             e.role if e.kind.startswith("call_") else "grader" if e.kind in ("grading", "graded") else None
         )
+        if e.kind.startswith("call_") and stage in ("coder", "solo"):
+            self.writing = e.kind == "call_started"
+        if e.kind in ("grading", "graded"):
+            self.attempt = e.data["attempt"]
         if e.kind == "call_started" and stage in ("coder", "solo"):
-            self.attempt += 1
             self.marks = {"planner": "done"} if not self.solo else {}  # a new cycle after the plan
         if e.kind == "call_started" and stage == "planner":
             self.marks = {}
@@ -60,7 +64,8 @@ class CodeBountyView:
             self.marks = {s: m for s, m in self.marks.items() if m != "flight"}
 
     def render(self, now: float) -> RenderableType:
-        title = f"{self.task_id} · attempt {self.attempt}/{self.max_attempts}"
+        attempt = self.attempt + 1 if self.writing else self.attempt
+        title = f"{self.task_id} · attempt {attempt}/{self.max_attempts}"
         if not self.solo:
             title += f" · plan {self.plan}"
         lines: list[RenderableType] = [Text(title, style="bold"), self.chain(now)]

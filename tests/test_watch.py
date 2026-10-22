@@ -2,6 +2,7 @@
 
 import asyncio
 import gc
+import os
 import re
 import signal
 import sqlite3
@@ -17,7 +18,7 @@ from scripted import CODE_BOUNTY, events, play_mafia, reply, run_bounty
 from arena import cli
 from arena.core import orchestrator
 from arena.core import plugin as core_plugin
-from arena.core.events import Event
+from arena.core.events import Event, boot_id
 from arena.core.lineup import Lineup
 from arena.core.plugin import Outcome, Session
 from arena.core.runlog import RunLog
@@ -612,3 +613,58 @@ def test_escape_sequences_in_replies_never_reach_the_terminal(monkeypatch, tmp_p
     assert (
         "\x1b[2J" not in out.getvalue() and "\x1b]0;" not in out.getvalue() and "\u202e" not in out.getvalue()
     )
+
+
+def test_hidden_night_facts_are_shown_once_the_game_is_over(monkeypatch, tmp_path) -> None:
+    _, run_id = play_mafia(monkeypatch, tmp_path)
+    text = replay_text(tmp_path / "arena.db", run_id, ViewOptions(hide_roles=True))
+    assert "night 2: Emery chose Casey · Casey (villager) killed" in text
+
+
+def test_watch_will_not_follow_a_run_through_an_immutable_connection(monkeypatch, tmp_path, capsys) -> None:
+    log, run_id = run_bounty(monkeypatch, tmp_path, "solo", [GOOD], [True])
+    log.db.close()
+    gc.collect()
+    tmp_path.chmod(0o555)  # replay may read this as immutable; a viewer that follows runs may not
+    try:
+        assert asyncio.run(asyncio.wait_for(app.attach(tmp_path / "arena.db", run_id, ViewOptions()), 5)) == 2
+    finally:
+        tmp_path.chmod(0o755)
+    assert "can't read" in capsys.readouterr().err
+
+
+def test_watch_run_id_waits_for_a_just_started_runs_first_event(tmp_path) -> None:
+    log = RunLog(tmp_path / "arena.db")
+    run_id = log.start_run("a", "code_bounty")  # the row is there, its first event isn't yet
+    db = app.open_readonly(tmp_path / "arena.db")
+
+    async def pick():
+        picking = asyncio.create_task(app.pick_run(db, run_id, Console(file=StringIO()), 0.01))
+        await asyncio.sleep(0.03)
+        log.log_event(run_id, None, "run_started", RUN_STARTED)
+        return await asyncio.wait_for(picking, 5)
+
+    assert asyncio.run(pick()) == run_id
+
+
+def test_a_pid_from_another_boot_is_not_taken_for_the_run(tmp_path) -> None:
+    log = RunLog(tmp_path / "arena.db")
+    run_id = log.start_run("a", "code_bounty")
+    db = app.open_readonly(tmp_path / "arena.db")
+    log.log_event(run_id, None, "run_started", {**RUN_STARTED, "pid": os.getpid(), "boot": "an-earlier-boot"})
+    assert app.run_ended(db, run_id)  # this pid is alive, but it isn't that run's process
+    log.log_event(run_id + 1, None, "run_started", {**RUN_STARTED, "pid": os.getpid(), "boot": boot_id()})
+    assert not app.run_ended(db, run_id + 1)
+
+
+def test_attempt_shown_is_the_plugins_count_after_a_failed_call(monkeypatch, tmp_path) -> None:
+    _, run_id = run_bounty(monkeypatch, tmp_path, "solo", [BAD, RuntimeError("rate limited")], [False])
+    text = replay_text(tmp_path / "arena.db", run_id)
+    assert "ERROR, not scored in 1 attempt(s)" in text and "001-two-sum · attempt 1/3" in text
+
+
+def test_hide_roles_needs_watch(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(sys, "argv", ["arena", "run", "--lineup", "mafia-haiku", "--hide-roles"])
+    with pytest.raises(SystemExit) as stop:
+        cli.main()
+    assert stop.value.code == 2 and "add --watch" in capsys.readouterr().err

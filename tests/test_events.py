@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from scripted import CODE_BOUNTY, TOWN_WINS, events, kinds, play_mafia, reply, run_bounty
 
-from arena.core.events import EVENTS_VERSION, Event, brief
+from arena.core.events import EVENTS_VERSION, Event, boot_id, brief
 from arena.core.runlog import RunLog
 from arena.plugins.code_bounty.grader import GraderError
 
@@ -59,6 +59,7 @@ def test_solo_run_logs_core_events_in_order(monkeypatch, tmp_path) -> None:
         "settings": {},
         "max_calls": CODE_BOUNTY.max_calls,
         "pid": os.getpid(),
+        "boot": boot_id(),
     }
     task = next(e for e in evs if e.kind == "task_started")
     assert (task.task_id, task.data) == ("001-two-sum", {"index": 1, "total": 1})

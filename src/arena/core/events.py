@@ -9,6 +9,7 @@ the viewer (arena.watch) reads events, core only writes them.
 
 import json
 import sqlite3
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
@@ -54,6 +55,14 @@ def read_events(db: sqlite3.Connection, run_id: int, after_id: int = 0) -> list[
 def latest_event_run(db: sqlite3.Connection) -> int | None:
     """The newest run that has any events."""
     return db.execute("SELECT max(run_id) FROM events").fetchone()[0]
+
+
+def boot_id() -> str | None:
+    """This boot of the machine (Linux), so a viewer can tell a run's pid from one reused after a restart."""
+    try:
+        return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    except OSError:
+        return None
 
 
 def brief(text: str | None, n: int = 200) -> str:

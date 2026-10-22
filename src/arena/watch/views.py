@@ -99,6 +99,11 @@ def plain(value: Any) -> Any:
     return value
 
 
+def short_model(model: str | None) -> str:
+    """A model without its provider prefix: "ollama/qwen2.5-coder:14b" -> "qwen2.5-coder:14b"."""
+    return (model or "").split("/", 1)[-1]
+
+
 def epoch(ts: str) -> float:
     return datetime.fromisoformat(ts).timestamp()
 

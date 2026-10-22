@@ -8,7 +8,7 @@ from rich.text import Text
 
 from arena.core.orchestrator import format_cost
 from arena.watch.state import CallRow, RunState, TaskRow
-from arena.watch.views import epoch, seconds
+from arena.watch.views import epoch, seconds, short_model
 
 ICONS = {
     "pending": ("·", "dim"),
@@ -35,10 +35,6 @@ SPARE_ROWS = 8  # terminal rows left free under a live view, so printed lines st
 def clock(s: float) -> str:
     s = max(0, int(s))
     return f"{s // 3600}:{s // 60 % 60:02}:{s % 60:02}" if s >= 3600 else f"{s // 60}:{s % 60:02}"
-
-
-def short_model(model: str | None) -> str:
-    return (model or "").split("/", 1)[-1]
 
 
 def header(state: RunState, now: float, staleness: bool) -> Text:

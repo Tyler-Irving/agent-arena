@@ -6,6 +6,7 @@ read back later like a transcript. Plugins add their own tables (Plugin.schema).
 
 import json
 import sqlite3
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -100,8 +101,8 @@ class RunLog:
         # WAL, so a viewer reading events in another process never blocks the run.
         # The mode is stored in the file, so this only changes it once.
         mode = self.db.execute("PRAGMA journal_mode=WAL").fetchone()[0]
-        if mode != "wal":
-            raise RuntimeError(f"could not put {path} in WAL mode (got {mode!r})")
+        if mode != "wal":  # some filesystems can't; runs still work, a viewer may make them wait
+            print(f"note: {path} stays in {mode} journal mode, not WAL", file=sys.stderr)
         self.db.executescript(SCHEMA)
         # Columns added after the first release; CREATE TABLE IF NOT EXISTS skips
         # existing tables, so add them to older databases here.

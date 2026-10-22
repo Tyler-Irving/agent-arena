@@ -127,13 +127,15 @@ def summarize(run_id: int, outcomes: list[Outcome]) -> str:
     )
 
 
-def run_stoppable(command: Coroutine[Any, Any, int]) -> int:
+def run_stoppable(
+    command: Coroutine[Any, Any, int], stopped: str | None = "interrupted; anything unfinished is not scored"
+) -> int:
     """asyncio.run(command), stopping it cleanly on Ctrl-C or SIGTERM.
 
     The first signal cancels the command, so runs are closed and any sandbox
     container is killed. Later signals are ignored: cancelling that cleanup
     could leave a container running model-written code. Returns 128 + signal
-    number when stopped, the shell convention.
+    number when stopped, the shell convention, after printing `stopped` (if any).
     """
     received: list[signal.Signals] = []
 
@@ -158,7 +160,8 @@ def run_stoppable(command: Coroutine[Any, Any, int]) -> int:
     except asyncio.CancelledError:
         if not received:
             raise
-        print("\ninterrupted; anything unfinished is not scored", file=sys.stderr)
+        if stopped:
+            print(f"\n{stopped}", file=sys.stderr)
         return 128 + received[0]
 
 
@@ -183,20 +186,17 @@ def watch(run_id: int | None, hide_roles: bool) -> int:
     from arena.watch.app import attach
     from arena.watch.views import ViewOptions
 
-    try:
-        return asyncio.run(attach(DEFAULT_DB, run_id, ViewOptions(hide_roles=hide_roles)))
-    except KeyboardInterrupt:
-        return 130  # only the viewer stops; the run goes on
+    # Stoppable, so the live view is closed (and the cursor shown again) on Ctrl-C or SIGTERM.
+    # Only the viewer stops; the run it watches goes on.
+    return run_stoppable(attach(DEFAULT_DB, run_id, ViewOptions(hide_roles=hide_roles)), stopped=None)
 
 
 def replay(run_id: int, speed: float, hide_roles: bool) -> int:
     from arena.watch.app import replay as play_back
     from arena.watch.views import ViewOptions
 
-    try:
-        return asyncio.run(play_back(DEFAULT_DB, run_id, speed, ViewOptions(hide_roles=hide_roles)))
-    except KeyboardInterrupt:
-        return 130
+    options = ViewOptions(hide_roles=hide_roles)
+    return run_stoppable(play_back(DEFAULT_DB, run_id, speed, options), stopped=None)
 
 
 def main() -> None:

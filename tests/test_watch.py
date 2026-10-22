@@ -3,6 +3,8 @@
 import asyncio
 import gc
 import re
+import signal
+import sqlite3
 import subprocess
 import sys
 from io import StringIO
@@ -62,6 +64,13 @@ def frame(evs: list[Event], options: ViewOptions | None = None) -> tuple[str, Ru
     return console.export_text(), state
 
 
+def status(text: str) -> str:
+    """The run status in the last header drawn."""
+    found = re.findall(r"· (running|finished|interrupted|unfinished \(no run_finished\))", text)
+    assert found, text
+    return found[-1]
+
+
 def upto(evs: list[Event], pred) -> list[Event]:
     """The events up to and including the first one matching pred."""
     i = next(i for i, e in enumerate(evs) if pred(e))
@@ -76,7 +85,7 @@ def test_replay_of_a_solo_run(monkeypatch, tmp_path) -> None:
     text = replay_text(tmp_path / "arena.db", run_id)
 
     assert f"run {run_id} · fake-solo · code_bounty · task 1/1" in text
-    assert "finished" in text and "$0.0200" in text
+    assert status(text) == "finished" and "$0.0200" in text
     assert "✔ 001-two-sum PASS in 2 attempt(s) 2 call(s)" in " ".join(text.split())
     assert "001-two-sum · attempt 2/3" in text and "plan" not in text.split("attempt 2/3")[1].split("\n")[0]
     assert "solo ⇄ grader" in " ".join(text.split())
@@ -143,7 +152,7 @@ def test_god_view_shows_the_proposal_and_check(monkeypatch, tmp_path) -> None:
 
 
 def test_hide_roles_mid_night_hides_everything_that_gives_a_player_away(monkeypatch, tmp_path) -> None:
-    log, run_id = play_mafia(monkeypatch, tmp_path, roles=NAMED_MODELS)
+    log, run_id = play_mafia(monkeypatch, tmp_path, roles=NAMED_MODELS, costs={"mafia": 0.05})
     evs = events(log, run_id)
     night2 = next(
         i
@@ -163,11 +172,22 @@ def test_hide_roles_mid_night_hides_everything_that_gives_a_player_away(monkeypa
     assert "model-d" not in text and "model-v" not in text
     assert "proposed" not in text and "chose" not in text and "checked" not in text
     assert "night 2 · night actions ●" in flat and "(night)" in text
-    assert "+ hidden" in text
-    # every call by a hidden player is masked, so no model, tokens or cost of theirs is drawn
+    # costs leave out every hidden call, in the header and in the task's row alike
+    header = re.search(r"(\$\d+\.\d{4}) \+ hidden · running", text)
+    row = re.search(r"game-01 +\d+ call\(s\) (\$\d+\.\d{4}) \+ hidden", text)
+    assert header and row and header[1] == row[1]
+    # A hidden player's calls are masked, and so is every night call, even of a player out since:
+    # which of night 1's calls was Blake's would show whether he proposed (his partner sits later).
+    view = state.views["game-01"]
     for c in state.calls:
         name = (c.started.role or "").partition(":")[2]
-        assert (state.mask(c.started) is None) == (name in ("", "Finley", "Blake")), c.started.role
+        night = c.started.id in view.night_calls  # type: ignore[attr-defined]
+        assert (state.mask(c.started) is not None) == bool(
+            name and (night or name not in ("Finley", "Blake"))
+        )
+    blake = [c for c in state.calls if c.started.role == "mafia:Blake"]
+    assert state.mask(blake[0].started) == "(night)"  # his night 1 call
+    assert state.mask(blake[1].started) is None  # his day 1 speech
 
     # once the game is over, everything is shown
     text = replay_text(tmp_path / "arena.db", run_id, hidden)
@@ -377,7 +397,9 @@ def test_watch_waits_for_the_next_run_and_follows_it_to_the_end(monkeypatch, tmp
     assert asyncio.run(both()) == 0
     text = console.export_text()
     assert "waiting for a new run" in text
-    assert "run 2 · slow · code_bounty" in text and "finished" in text and "PASS in 2 attempt(s)" in text
+    assert (
+        "run 2 · slow · code_bounty" in text and status(text) == "finished" and "PASS in 2 attempt(s)" in text
+    )
 
 
 def test_watch_attaches_to_a_run_in_progress(monkeypatch, tmp_path) -> None:
@@ -386,13 +408,15 @@ def test_watch_attaches_to_a_run_in_progress(monkeypatch, tmp_path) -> None:
     async def both():
         run = asyncio.create_task(slow_solo(monkeypatch, tmp_path, delay=0.1))
         await asyncio.sleep(0.05)  # the run has started
-        code = await app.attach(tmp_path / "arena.db", None, ViewOptions(), console, poll_s=0.01)
+        code = await asyncio.wait_for(
+            app.attach(tmp_path / "arena.db", None, ViewOptions(), console, poll_s=0.01), 5
+        )
         await run
         return code
 
     assert asyncio.run(both()) == 0
     text = console.export_text()
-    assert "waiting" not in text and "run 1 · slow" in text and "finished" in text
+    assert "waiting" not in text and "run 1 · slow" in text and status(text) == "finished"
 
 
 def test_run_watch_keeps_every_printed_line(monkeypatch, tmp_path, capsys) -> None:
@@ -452,3 +476,121 @@ def test_a_wall_clock_stepped_back_never_shows_negative_or_moves_back(monkeypatc
         state.apply(e)
     assert state.last_at == epoch(evs[1].ts)
     assert views.seconds(-3.4) == "0.0s"
+
+
+def test_a_database_from_before_events_is_refused_not_a_crash(tmp_path, capsys) -> None:
+    db = tmp_path / "arena.db"
+    old = sqlite3.connect(db)
+    old.execute("CREATE TABLE runs (id INTEGER PRIMARY KEY, finished_at TEXT)")
+    old.execute("INSERT INTO runs VALUES (1, 'x')")
+    old.commit()
+    old.close()
+
+    assert asyncio.run(app.replay(db, 1, 0, ViewOptions())) == 2
+    assert "run 1 has no events" in capsys.readouterr().err
+    assert asyncio.run(app.attach(db, 1, ViewOptions())) == 2
+    assert "run 1 has no events" in capsys.readouterr().err
+    db.write_bytes(b"not a database")
+    assert asyncio.run(app.replay(db, 1, 0, ViewOptions())) == 2
+    assert "can't read" in capsys.readouterr().err
+
+
+def dead_pid() -> int:
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])
+    proc.wait()
+    return proc.pid
+
+
+def killed_run(log: RunLog) -> int:
+    """A run whose process died mid-task: no run_finished, no finished_at."""
+    run_id = log.start_run("killed", "code_bounty")
+    log.log_event(run_id, None, "run_started", {**RUN_STARTED, "pid": dead_pid()})
+    log.log_event(run_id, "001-two-sum", "task_started", {"index": 1, "total": 1})
+    return run_id
+
+
+RUN_STARTED = {
+    "events_version": 1,
+    "lineup": "killed",
+    "plugin": "code_bounty",
+    "mode": "solo",
+    "roles": {"solo": "f/m"},
+    "tasks": ["001-two-sum"],
+    "max_attempts": 3,
+    "max_calls": 20,
+}
+
+
+def test_watch_ends_a_run_whose_process_is_gone(tmp_path) -> None:
+    run_id = killed_run(RunLog(tmp_path / "arena.db"))
+    console = Console(record=True, width=120)
+    watching = app.attach(tmp_path / "arena.db", run_id, ViewOptions(), console, poll_s=0.01)
+    assert asyncio.run(asyncio.wait_for(watching, 5)) == 0
+    assert status(console.export_text()) == "unfinished (no run_finished)"
+
+
+def test_watch_skips_a_dead_run_and_waits_for_the_next(monkeypatch, tmp_path) -> None:
+    killed_run(RunLog(tmp_path / "arena.db"))
+    console = Console(record=True, width=120)
+
+    async def both():
+        watcher = asyncio.create_task(
+            app.attach(tmp_path / "arena.db", None, ViewOptions(), console, poll_s=0.01)
+        )
+        await asyncio.sleep(0.05)
+        await slow_solo(monkeypatch, tmp_path)
+        return await asyncio.wait_for(watcher, 5)
+
+    assert asyncio.run(both()) == 0
+    text = console.export_text()
+    assert "waiting for a new run" in text and "run 2 · slow" in text and status(text) == "finished"
+
+
+def test_watch_does_not_miss_a_run_whose_row_is_written_before_its_events(tmp_path) -> None:
+    log = RunLog(tmp_path / "arena.db")
+    first = log.start_run("a", "code_bounty")
+    log.log_event(first, None, "run_started", RUN_STARTED)
+    log.finish_run(first)
+    db = app.open_readonly(tmp_path / "arena.db")
+
+    second = log.start_run("b", "code_bounty")  # the next run's row is written...
+
+    async def pick_while_the_next_run_starts():
+        picking = asyncio.create_task(app.pick_run(db, None, Console(file=StringIO()), 0.01))
+        await asyncio.sleep(0.03)  # ...the watcher looks in between...
+        log.log_event(second, None, "run_started", RUN_STARTED)  # ...then its first event
+        return second, await asyncio.wait_for(picking, 5)
+
+    second, picked = asyncio.run(pick_while_the_next_run_starts())
+    assert picked == second
+
+
+WATCH_UNTIL_SIGNAL = """
+import sys
+from pathlib import Path
+from arena import cli
+from arena.core.runlog import RunLog
+RunLog(Path(sys.argv[1]))  # an empty database: the viewer waits for a run
+cli.DEFAULT_DB = Path(sys.argv[1])
+sys.argv = ["arena", "watch"]
+cli.main()
+"""
+
+
+@pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGINT])
+def test_watch_stops_cleanly_on_a_signal(tmp_path, sig: signal.Signals) -> None:
+    proc = subprocess.Popen(
+        [sys.executable, "-c", WATCH_UNTIL_SIGNAL, str(tmp_path / "arena.db")],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert proc.stdout is not None
+        assert "waiting for a new run" in proc.stdout.readline()
+        proc.send_signal(sig)
+        _, err = proc.communicate(timeout=10)
+    finally:
+        proc.kill()
+    assert proc.returncode == 128 + sig, err
+    assert "interrupted" not in err and "Traceback" not in err

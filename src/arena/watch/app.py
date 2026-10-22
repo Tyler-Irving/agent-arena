@@ -4,6 +4,8 @@ events with RunState and draw them with render.screen.
 """
 
 import asyncio
+import json
+import os
 import sqlite3
 import sys
 import time
@@ -51,10 +53,32 @@ def run_exists(db: sqlite3.Connection, run_id: int) -> bool:
     return db.execute("SELECT 1 FROM runs WHERE id = ?", (run_id,)).fetchone() is not None
 
 
-def run_closed(db: sqlite3.Connection, run_id: int) -> bool:
-    """Whether the run's process has finished it (runs.finished_at), events or not."""
+def has_events(db: sqlite3.Connection) -> bool:
+    """Whether the events table exists yet (a database from before it only gets one when a run opens it)."""
+    table = db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'events'").fetchone()
+    return table is not None
+
+
+def run_ended(db: sqlite3.Connection, run_id: int) -> bool:
+    """Whether the run's process finished it (runs.finished_at), or is gone without doing so (killed)."""
     row = db.execute("SELECT finished_at FROM runs WHERE id = ?", (run_id,)).fetchone()
-    return row is not None and row[0] is not None
+    if row is not None and row[0] is not None:
+        return True
+    started = db.execute(
+        "SELECT data FROM events WHERE run_id = ? AND kind = 'run_started' LIMIT 1", (run_id,)
+    ).fetchone()
+    pid = json.loads(started[0]).get("pid") if started else None
+    return pid is not None and not process_alive(pid)
+
+
+def process_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)  # signal 0: only checks that the process exists
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # it exists, under another user
+    return True
 
 
 class Follower:
@@ -112,7 +136,8 @@ async def watch_run(
             failure.append(e)
 
     try:
-        with Live(console=console, auto_refresh=False, redirect_stdout=True, redirect_stderr=True) as live:
+        # stderr joins the view only when it goes to the terminal too, not when it is redirected.
+        with Live(console=console, auto_refresh=False, redirect_stderr=sys.stderr.isatty()) as live:
             poller = asyncio.create_task(poll(live))
             try:
                 return await command
@@ -144,22 +169,25 @@ async def attach(
         db = open_readonly(path)
         run_id = await pick_run(db, run_id, console, poll_s)
         follower = Follower(db, run_id, options)
-        closed_before = False
+        ended_before = False
         with Live(console=console, auto_refresh=False) as live:
             while True:
                 # finished_at is set just before run_finished is logged, so a run
                 # counts as ended without run_finished only if it stays that way for a poll.
-                closed = run_closed(db, run_id)
+                ended = run_ended(db, run_id)
                 new = follower.poll()
-                if follower.done or (closed_before and not new):
+                if follower.done or (ended_before and not new):
                     follower.state.unfinished = not follower.done
                     live.update(screen(follower.state, time.time(), console), refresh=True)
                     return 0
-                closed_before = closed
+                ended_before = ended
                 live.update(screen(follower.state, time.time(), console, staleness=True), refresh=True)
                 await asyncio.sleep(poll_s)
     except (WatchError, VersionMismatch) as e:
         print(e, file=sys.stderr)
+        return 2
+    except sqlite3.DatabaseError as e:
+        print(f"can't read {path}: {e}", file=sys.stderr)
         return 2
 
 
@@ -168,18 +196,20 @@ async def pick_run(db: sqlite3.Connection, run_id: int | None, console: Console,
     if run_id is not None:
         if not run_exists(db, run_id):
             raise WatchError(f"no run {run_id}")
-        if db.execute("SELECT 1 FROM events WHERE run_id = ? LIMIT 1", (run_id,)).fetchone() is None:
+        has_any = has_events(db) and db.execute("SELECT 1 FROM events WHERE run_id = ?", (run_id,)).fetchone()
+        if not has_any:
             raise WatchError(NO_EVENTS.format(run_id))
         return run_id
-    latest = latest_event_run(db)
-    if latest is not None and not run_closed(db, latest):
+    latest = latest_event_run(db) if has_events(db) else None
+    if latest is not None and not run_ended(db, latest):
         return latest
     console.print("waiting for a new run… (Ctrl-C to stop)", style="dim")
-    newest = db.execute("SELECT max(id) FROM runs").fetchone()[0] or 0
+    # By events, not runs rows: a run's row is written a moment before its first event.
     while True:
-        row = db.execute("SELECT min(run_id) FROM events WHERE run_id > ?", (newest,)).fetchone()
-        if row[0] is not None:
-            return row[0]
+        if has_events(db):
+            row = db.execute("SELECT min(run_id) FROM events WHERE run_id > ?", (latest or 0,)).fetchone()
+            if row[0] is not None:
+                return row[0]
         await asyncio.sleep(poll_s)
 
 
@@ -200,7 +230,7 @@ async def replay(
         db = open_readonly(path)
         if not run_exists(db, run_id):
             raise WatchError(f"no run {run_id}")
-        events = read_events(db, run_id)
+        events = read_events(db, run_id) if has_events(db) else []
         if not events:
             raise WatchError(NO_EVENTS.format(run_id))
         state = RunState(options)
@@ -227,4 +257,7 @@ async def replay(
         return 0
     except (WatchError, VersionMismatch) as e:
         print(e, file=sys.stderr)
+        return 2
+    except sqlite3.DatabaseError as e:
+        print(f"can't read {path}: {e}", file=sys.stderr)
         return 2

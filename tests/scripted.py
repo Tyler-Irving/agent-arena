@@ -104,8 +104,10 @@ def run_bounty(
     return log, log.last_run_id
 
 
-def mafia_complete(script: dict | None, seen: list[tuple[str, str]] | None = None):
-    """A fake complete that plays `script` (None: every reply is unusable)."""
+def mafia_complete(
+    script: dict | None, seen: list[tuple[str, str]] | None = None, costs: dict[str, float] | None = None
+):
+    """A fake complete that plays `script` (None: every reply is unusable). `costs`: price by role."""
 
     async def fake_complete(model, system, messages, *, role, **kwargs):
         content = messages[0]["content"]
@@ -113,19 +115,23 @@ def mafia_complete(script: dict | None, seen: list[tuple[str, str]] | None = Non
             seen.append((role, content))
         if role == "narrator":
             return reply("The village wakes.")
-        if script is None:
-            return reply("hmm")
         kind, name = role.split(":")
+
+        def say(text: str) -> ModelResponse:
+            return reply(text, (costs or {}).get(kind, 0.01))
+
+        if script is None:
+            return say("hmm")
         n = int(re.findall(r"It is (?:night|day) (\d+)", content)[-1])
         last = content.splitlines()[-1]
         if "TARGET:" in last:
-            return reply(f"Quiet one first.\nTARGET: {script['kills'][n]}")
+            return say(f"Quiet one first.\nTARGET: {script['kills'][n]}")
         if "CHECK:" in last:
-            return reply(f"CHECK: {script['checks'][n]}")
+            return say(f"CHECK: {script['checks'][n]}")
         if "VOTE:" in last:
             target = script["votes"].get(n) if kind != "mafia" else None
-            return reply(f"VOTE: {target or 'none'}")
-        return reply(f"{name} speaks on day {n}.")
+            return say(f"VOTE: {target or 'none'}")
+        return say(f"{name} speaks on day {n}.")
 
     return fake_complete
 
@@ -136,8 +142,9 @@ def play_mafia(
     script: dict | None = TOWN_WINS,
     game: str = "01",
     roles: dict[str, str] | None = None,
+    costs: dict[str, float] | None = None,
 ) -> tuple[RunLog, int]:
-    monkeypatch.setattr(core_plugin, "complete", mafia_complete(script))
+    monkeypatch.setattr(core_plugin, "complete", mafia_complete(script, costs=costs))
     lineup = Lineup.model_validate(
         {"name": "mafia-fake", "plugin": "mafia", "mode": "game", "roles": roles or MAFIA_ROLES}
     )

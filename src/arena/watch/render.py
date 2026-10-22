@@ -68,16 +68,17 @@ def header(state: RunState, now: float, staleness: bool) -> Text:
 def task_list(state: RunState) -> Table:
     grid = Table.grid(padding=(0, 1))
     for task in state.tasks.values():
-        grid.add_row(*task_row(task))
+        grid.add_row(*task_row(state, task))
     return grid
 
 
-def task_row(task: TaskRow) -> list[Text]:
+def task_row(state: RunState, task: TaskRow) -> list[Text]:
     icon, style = ICONS.get(task.status, ("?", ""))
     if task.status == "done" and task.score is not None and task.score < 1.0:
         icon, style = ICONS["failed"]  # finished, but scored below 1 (e.g. mafia won)
     calls = f"{task.calls} call(s)" if task.calls else ""
-    cost = format_cost(task.cost_usd) if task.calls else ""
+    total, hidden = state.cost(task.id)
+    cost = format_cost(total) + (" + hidden" if hidden else "") if task.calls else ""
     verdict = Text(task.verdict or "", style=style)
     return [Text(icon, style=style), Text(task.id), verdict, Text(calls), Text(cost)]
 

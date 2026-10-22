@@ -8,6 +8,7 @@ breaks.
 """
 
 import asyncio
+import os
 import time
 from typing import Any
 
@@ -66,6 +67,7 @@ async def run_lineup[T: TaskSpec](
     event(
         "run_started",
         events_version=EVENTS_VERSION,
+        pid=os.getpid(),  # so a viewer can tell a killed run from a slow one
         lineup=lineup.name,
         plugin=plugin.name,
         mode=lineup.mode,

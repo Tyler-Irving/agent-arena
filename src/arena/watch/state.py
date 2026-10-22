@@ -21,7 +21,6 @@ class TaskRow:
     verdict: str | None = None
     score: float | None = None
     calls: int = 0
-    cost_usd: float | None = 0.0
 
 
 @dataclass
@@ -75,9 +74,6 @@ class RunState:
             )
             if row is not None:
                 row.finished = e
-            cost = e.data.get("cost_usd")
-            if e.data.get("error") is None:
-                task.cost_usd = None if task.cost_usd is None or cost is None else task.cost_usd + cost
         elif e.kind == "task_finished":
             task.status = e.data.get("status", "done")
             task.verdict = e.data.get("verdict")
@@ -90,12 +86,18 @@ class RunState:
         view = self.views.get(e.task_id or "")
         return view.mask(e) if view is not None else None
 
-    def cost(self) -> tuple[float | None, bool]:
-        """(cost of the calls shown, whether some calls' cost is hidden). None if a price is unknown."""
+    def cost(self, task_id: str | None = None) -> tuple[float | None, bool]:
+        """(cost of the calls shown, whether some calls' cost is hidden), for the run or one task.
+
+        The total is None if a price is unknown. Hidden calls are left out
+        everywhere, or their price would give their model away.
+        """
         total: float | None = 0.0
         hidden = False
         for c in self.calls:
             if c.finished is None or c.finished.data.get("error") is not None:
+                continue
+            if task_id is not None and c.started.task_id != task_id:
                 continue
             if self.mask(c.started) is not None:
                 hidden = True

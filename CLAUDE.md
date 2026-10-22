@@ -120,7 +120,7 @@ class Plugin[T: TaskSpec](Protocol):   # TaskSpec: anything with an `id: str`
 ### Events (what `arena watch` shows)
 
 Every step of a run is a row in `events`, committed as it happens. The database is in WAL mode, so a viewer in another process never blocks the run. Core logs:
-- `run_started`: events_version, lineup, plugin, mode, roles, tasks, selector, max_attempts, settings, max_calls
+- `run_started`: events_version, pid (so a viewer can tell a killed run from a slow one), lineup, plugin, mode, roles, tasks, selector, max_attempts, settings, max_calls
 - `task_started`: index, total
 - `call_started` and `call_finished`: from Session.call, with tokens, latency, cost, truncated and error ("interrupted" on Ctrl-C), but never the reply text
 - `task_finished`: status done/failed/error/interrupted, verdict, score, reason, calls, cost, wall time

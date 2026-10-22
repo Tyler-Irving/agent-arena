@@ -3,7 +3,11 @@
 Roles are shown by default (god view). With --hide-roles a role stays hidden
 until that player is out or the game ends, and so does everything that would
 give a living player away: night actions, the mafia's proposal and who chose
-the kill, the detective's checks, and which model a living player's calls used.
+the kill, the detective's checks, and which model a living player's calls used
+(with their tokens and cost). Night calls stay hidden until the game ends, even
+for a player who is out by then: which of a night's calls was theirs would show
+whether they proposed or chose, and so where their partner sits. Who is speaking
+or voting, and for how long, is public, as it would be at the table.
 
 Only arena.watch imports this module (by name), so the plugin itself never loads Rich.
 """
@@ -99,10 +103,12 @@ class MafiaView:
         role = event.role or ""
         if ":" not in role:  # the narrator
             return None
-        name = role.split(":", 1)[1]
-        if self.revealed(name):
+        if not self.hide or self.over:
             return None
-        return "(night)" if event.id in self.night_calls else name
+        if event.id in self.night_calls:
+            return "(night)"
+        name = role.split(":", 1)[1]
+        return None if self.revealed(name) else name
 
     # --- drawing ---
 

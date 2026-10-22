@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import re
 import sqlite3
 from collections import Counter
@@ -57,6 +58,7 @@ def test_solo_run_logs_core_events_in_order(monkeypatch, tmp_path) -> None:
         "max_attempts": 3,
         "settings": {},
         "max_calls": CODE_BOUNTY.max_calls,
+        "pid": os.getpid(),
     }
     task = next(e for e in evs if e.kind == "task_started")
     assert (task.task_id, task.data) == ("001-two-sum", {"index": 1, "total": 1})

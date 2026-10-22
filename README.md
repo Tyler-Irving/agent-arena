@@ -4,10 +4,17 @@ A small, hand-written multi-agent system for comparing model **lineups** — mix
 local Ollama models and Claude models via the Anthropic API — on the same tasks.
 
 Each task type is a **plugin**, and the core loop doesn't know which one it is running.
-The first plugin is a **code bounty board**: the orchestrator posts coding problems,
-workers write solutions, and a locked-down Docker sandbox grades them with pytest. Every
-model call, attempt and result goes into SQLite, so you can compare pass rate, attempts,
-tokens, cost and time per lineup, and read any run back like a transcript.
+There are two:
+
+- **Code bounty board**: the orchestrator posts coding problems, workers write solutions,
+  and a locked-down Docker sandbox grades them with pytest.
+- **Mafia**: 5-7 agents play a social deduction game, each seeing only its own view, and the
+  score is which side won.
+
+Every model call, attempt and result goes into SQLite, so you can compare pass rate, attempts,
+tokens, cost and time per lineup, and read any run back like a transcript. Every step is also
+logged as an event, so you can watch a run live in the terminal (`--watch`, `arena watch`) or
+replay it afterwards (`arena replay`).
 
 There is no agent framework (no LangChain, LangGraph or CrewAI). The whole loop is
 a few hundred lines of plain async Python, because the point is to see how
@@ -54,6 +61,8 @@ uv run arena run --lineup qwen14b-solo --repeat 5  # five runs, to see run-to-ru
 uv run arena scoreboard                            # compare lineups across all runs
 uv run arena scoreboard --since 17                 # only run 17 and later
 uv run arena scoreboard --plugin code_bounty       # one plugin's lineups (code_bounty is the default)
+uv run arena run --lineup gptoss-solo --watch      # run with a live view
+uv run arena replay 32 --speed 10                  # replay a finished run, 10x as fast
 ```
 
 Ctrl-C or SIGTERM stops a run cleanly: the run is closed and marked interrupted, and the
@@ -62,6 +71,27 @@ sandbox cleanup. The scoreboard's "per run" range only compares full, uninterrup
 
 For local models, pull them first (`ollama pull qwen2.5-coder:14b`) and keep Ollama
 on `http://localhost:11434`.
+
+## Commands
+
+| Command | Flag / argument | Meaning |
+| --- | --- | --- |
+| `arena smoke` | `--model M` | One call to each model, to check keys and Ollama. Repeatable; defaults to Haiku and qwen2.5-coder:14b. |
+| `arena run` | `--lineup NAME` | Required. A lineup from `config/lineups.yaml`; it decides the plugin and the model for each role. |
+| | `--problem X` | One task instead of all: a problem number (`004`) or a Mafia game (`3`, `03` or `game-03`). |
+| | `--repeat N` | Run everything N times, to see run-to-run noise. |
+| | `--watch` | Show a live view while it runs. The usual lines still print above it. |
+| | `--hide-roles` | Mafia, with `--watch`: hide each role until that player is out or the game ends. |
+| `arena watch` | `RUN_ID` | Optional. Follow a run from another terminal; with no id, the run in progress, or the next one to start. |
+| | `--hide-roles` | As above. |
+| `arena replay` | `RUN_ID` | Required. Play a finished run back. |
+| | `--speed N` | How fast: `1` (default) is real time, `10` ten times as fast, `0.5` half speed, `0` only the final state. |
+| | `--hide-roles` | As above. |
+| `arena scoreboard` | `--plugin P` | Whose lineups to compare (default `code_bounty`). For `mafia`, "pass" is the town win rate. |
+| | `--since RUN_ID` | Only count that run and later ones, e.g. to compare before and after a change. |
+
+A run prints its id when it ends (`run 32: 1/1 passed, ...`), and the live view shows it in its
+header. Ctrl-C stops a watcher or a replay without touching the run being watched.
 
 ## Lineups
 
@@ -87,6 +117,14 @@ qwen36-nothink-solo:
 For reasoning models (`gpt-oss`, `qwen3.6`), the thinking is kept out of the answer
 and stored separately, and its tokens are counted. `think: true|false` turns
 thinking on or off per role.
+
+The lineups that ship in the config (`anthropic/*` models cost money; `ollama/*` models are free):
+
+| Plugin | Lineups |
+| --- | --- |
+| code_bounty, solo | `haiku-solo`, `sonnet-solo`, `opus-solo`, `qwen14b-solo`, `gptoss-solo`, `qwen36-solo`, `qwen36-nothink-solo` |
+| code_bounty, team | `sonnet-orch-qwen14b` (Sonnet plans and decides, qwen14b codes and reviews), `sonnet-orch-qwen14b-5att` (the same with 5 attempts), `all-local-gptoss` |
+| mafia | `mafia-haiku`, `mafia-gptoss` (all local), `mafia-sonnet-vs-haiku` (Sonnet mafia, Haiku town), `mafia-haiku-vs-sonnet` (the reverse) |
 
 ## Problems
 
@@ -121,7 +159,30 @@ uv run arena scoreboard --plugin mafia               # "pass" is the town win ra
 ```
 
 Lineups such as `mafia-sonnet-vs-haiku` put a different model on each side. Every event goes to
-the `mafia_events` table, and every prompt to `calls`, so a game can be replayed per player.
+the `mafia_events` table, and every prompt to `calls`, so a game can be read back per player.
+
+To watch a game as it is played, or to replay one:
+
+```bash
+uv run arena run --lineup mafia-gptoss --problem 3 --watch                 # free and local, 2-4 minutes
+uv run arena run --lineup mafia-gptoss --problem 3 --watch --hide-roles    # no spoilers
+uv run arena replay 33 --speed 10                                          # a finished game, 10x as fast
+```
+
+```
+game-04 · day 2 · votes   alive 4/7 · mafia 1 · town 3
+seat  name    role       status          vote
+1     Finley  mafia      alive
+2     Drew    villager   ● voting 6s…
+3     Casey   villager   alive
+4     Gray    villager   ✝ night 1
+5     Blake   detective  ✝ night 2
+6     Avery   villager   alive
+7     Emery   mafia      ✗ out day 1
+last speech: Finley: I've seen no solid evidence yet...
+fact: night 2: Blake checked Finley: mafia
+fact: night 2: Finley chose Blake · Blake (detective) killed
+```
 
 ## Watching runs
 
@@ -219,7 +280,7 @@ uv run ruff check src tests && uv run ruff format --check src tests && uv run py
 | 6. Ten problems, mostly medium or harder | ✅ | `step-6-problems` |
 | 7. Plugin interface, making room for a second task type | ✅ | `step-7-plugins` |
 | 8. Mafia plugin | ✅ | `step-8-mafia` |
-| Live view and replay (`arena watch`, `arena replay`) | ✅ | |
+| 9. Live view and replay (`--watch`, `arena watch`, `arena replay`) | ✅ | `step-9-watch` |
 
 The first three problems are warm-ups. Problems 004-010 are medium to hard, and
 each one has edge cases that its prompt states but that are easy to miss

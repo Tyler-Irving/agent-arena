@@ -18,6 +18,7 @@ Side = Literal["town", "mafia"]
 
 NAMES = ["Avery", "Blake", "Casey", "Drew", "Emery", "Finley", "Gray"]
 MIN_PLAYERS, MAX_PLAYERS = 5, len(NAMES)
+DEFAULT_PLAYERS = MAX_PLAYERS
 
 
 def role_counts(players: int) -> dict[Role, int]:

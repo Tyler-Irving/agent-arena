@@ -22,7 +22,8 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
 from arena.core.runlog import RunLog
-from arena.core.scoreboard import format_table, settings_label
+from arena.core.scoreboard import cost_cell, format_table, settings_label
+from arena.plugins.mafia.game import DEFAULT_PLAYERS
 
 GAMES = """
 SELECT results.run_id, results.problem_id, results.score, results.metrics, results.total_calls,
@@ -33,18 +34,22 @@ WHERE runs.plugin = :plugin AND runs.id >= :since AND results.score IS NOT NULL
 ORDER BY results.id
 """
 
-# The model behind each player's calls in each game ("mafia:Blake" -> a model). Every call
-# since `arena watch` has a call_started event; older runs only have the calls table.
+# The model behind each player's calls in each game ("mafia:Blake" -> a model, and its think
+# setting). The router logs every real call to the calls table; a game with no call rows there
+# (a scripted test) falls back to its call_started events.
 MODELS = """
-SELECT calls.run_id, calls.problem_id, calls.role, calls.model
+SELECT calls.run_id, calls.problem_id, calls.role, calls.model, calls.think
 FROM calls
 JOIN runs ON runs.id = calls.run_id
 WHERE runs.plugin = :plugin AND runs.id >= :since
 UNION
-SELECT events.run_id, events.problem_id, events.role, events.model
+SELECT events.run_id, events.problem_id, events.role, events.model, NULL
 FROM events
 JOIN runs ON runs.id = events.run_id
 WHERE runs.plugin = :plugin AND runs.id >= :since AND events.kind = 'call_started'
+  AND NOT EXISTS (
+      SELECT 1 FROM calls WHERE calls.run_id = events.run_id AND calls.problem_id = events.problem_id
+  )
 """
 
 DETECTIVE_SPEECHES = """
@@ -60,11 +65,12 @@ WHERE runs.plugin = :plugin AND runs.id >= :since AND speech.kind = 'speech'
 # A detective claims by naming the role ("I'm the detective") or reporting a
 # check in the first person ("I checked Blake", "my check"). A text match, so
 # a hint rather than a fact: a claim made only by implication ("Finley was not
-# mafia") is missed.
+# mafia") is missed. "I checked" counts only before a capitalised name, so "I
+# checked the votes" isn't a claim.
 CLAIM = re.compile(
-    r"\bI(?:'|’)?m (?:the |your )?detective\b|\bI am (?:the |your )?detective\b"
-    r"|\bI (?:checked|investigated)\b|\bmy (?:last |first |night \d )?checks?\b",
-    re.IGNORECASE,
+    r"\b(?i:I(?:'|’)?m|I am) (?i:the |your )?(?i:detective)\b"
+    r"|\bI (?i:checked|investigated) [A-Z]"
+    r"|\b(?i:my (?:last |first |night \d )?checks?)\b"
 )
 
 
@@ -73,12 +79,14 @@ class Game:
     run_id: int
     game_id: str
     lineup: str  # with settings, as on the scoreboard: "mafia-x [players=5]"
-    deal: str  # the game id, plus the player count if the lineup sets one
+    deal: str  # the game id, plus the player count if it isn't the default
     town_won: bool
     mafia: list[str]  # the mafia players' names
     ended: str  # "night 2", "day 3"
-    mafia_model: str
+    mafia_model: str  # one side's model(s), as shown
     town_model: str
+    mafia_models: frozenset[str]  # every model that played a side
+    town_models: frozenset[str]
     calls: int
     cost_usd: float | None
     wall_time_ms: int
@@ -97,18 +105,21 @@ def report(log: RunLog, plugin: str, since: int | None) -> str:
 
 def load_games(db: sqlite3.Connection, plugin: str, since: int | None) -> list[Game]:
     params = {"plugin": plugin, "since": since or 0}
+    rows = db.execute(GAMES, params).fetchall()
+    if not rows:  # also before any Mafia run has created mafia_events
+        return []
     roles: dict[tuple[int, str], dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
-    for run_id, game_id, player, model in db.execute(MODELS, params):
+    for run_id, game_id, player, model, think in db.execute(MODELS, params):
         role, _, name = player.partition(":")
         if name:  # not the narrator
-            roles[run_id, game_id][role].add(model)
+            roles[run_id, game_id][role].add(model_label(model, think))
     claimed = {
         (run_id, game_id)
         for run_id, game_id, text in db.execute(DETECTIVE_SPEECHES, params)
         if CLAIM.search(text)
     }
     games = []
-    for r in db.execute(GAMES, params):
+    for r in rows:
         run_id, game_id, score, metrics, calls, cost, wall, lineup, settings = r
         m = json.loads(metrics)
         models = roles[run_id, game_id]
@@ -118,12 +129,14 @@ def load_games(db: sqlite3.Connection, plugin: str, since: int | None) -> list[G
                 run_id=run_id,
                 game_id=game_id,
                 lineup=settings_label(lineup, settings),
-                deal=game_id if not settings else settings_label(game_id, settings),
+                deal=game_id if m["players"] == DEFAULT_PLAYERS else f"{game_id} [players={m['players']}]",
                 town_won=score == 1.0,
                 mafia=m["mafia"],
                 ended=f"day {m['days']}" if m["days"] == m["nights"] else f"night {m['nights']}",
                 mafia_model=side_model(models, ["mafia"]),
                 town_model=side_model(models, ["detective", "villager"]),
+                mafia_models=frozenset(models["mafia"]),
+                town_models=frozenset(models["detective"] | models["villager"]),
                 calls=calls,
                 cost_usd=cost,
                 wall_time_ms=wall,
@@ -141,14 +154,16 @@ def load_games(db: sqlite3.Connection, plugin: str, since: int | None) -> list[G
 
 def side_model(models: dict[str, set[str]], roles: list[str]) -> str:
     """One side's model: "gpt-oss:20b", or each role's if they differ."""
-    by_role = {role: ", ".join(sorted(short(m) for m in models.get(role, ()))) or "?" for role in roles}
+    by_role = {role: ", ".join(sorted(models.get(role, ()))) or "?" for role in roles}
     if len(set(by_role.values())) == 1:
         return next(iter(by_role.values()))
     return " + ".join(f"{model} ({role})" for role, model in by_role.items())
 
 
-def short(model: str) -> str:
-    return model.split("/", 1)[-1]
+def model_label(model: str, think: int | None) -> str:
+    """ "gpt-oss:20b", with "(think)" or "(no think)" if the role set it, so those don't blend."""
+    name = model.split("/", 1)[-1]
+    return name if think is None else f"{name} ({'think' if think else 'no think'})"
 
 
 def format_report(games: list[Game], since: int | None) -> str:
@@ -168,8 +183,8 @@ def format_report(games: list[Game], since: int | None) -> str:
         "Rates come with their counts (won/games); one game per cell is noise, not evidence.",
         'A game with one model on both sides counts for it as mafia and as town; "vs other models"',
         "leaves those games out.",
-        'claimed = the detective said "I\'m the detective" or "I checked ..." in a speech (a text',
-        "match: a claim made only by implication is missed). Wall times read ~10% high under WSL2.",
+        'claimed = the detective said "I\'m the detective" or "I checked <name>" in a speech (a',
+        "text match: a claim made only by implication is missed).",
     ]
     out = [title]
     for heading, table in sections:
@@ -211,8 +226,9 @@ def by_model(games: list[Game]) -> list[str]:
         as_town = [g for g in games if g.town_model == model]
         mafia_won = [not g.town_won for g in as_mafia]
         town_won = [g.town_won for g in as_town]
-        vs_town = [not g.town_won for g in as_mafia if g.town_model != model]
-        vs_mafia = [g.town_won for g in as_town if g.mafia_model != model]
+        # against another model: no model plays on both sides
+        vs_town = [not g.town_won for g in as_mafia if g.mafia_models.isdisjoint(g.town_models)]
+        vs_mafia = [g.town_won for g in as_town if g.mafia_models.isdisjoint(g.town_models)]
         rows.append(
             [
                 model,
@@ -288,15 +304,15 @@ def costs(games: list[Game]) -> list[str]:
     for lineup, gs in grouped(games, lambda g: g.lineup).items():
         n = len(gs)
         bad = {kind: sum(g.invalid.get(kind, 0) for g in gs) for kind in ("target", "check", "vote")}
-        priced = [g.cost_usd for g in gs if g.cost_usd is not None]
-        cost = f"${sum(priced) / n:.4f}" if len(priced) == n else "?"
+        costs = [g.cost_usd for g in gs]
+        cost = None if None in costs else sum(c for c in costs if c is not None) / n
         rows.append(
             [
                 lineup,
                 str(n),
                 f"{sum(bad.values())} ({bad['target']}/{bad['check']}/{bad['vote']})",
                 f"{sum(g.calls for g in gs) / n:.1f}",
-                cost,
+                cost_cell(cost),
                 f"{sum(g.wall_time_ms for g in gs) / n / 1000:.0f}s",
             ]
         )

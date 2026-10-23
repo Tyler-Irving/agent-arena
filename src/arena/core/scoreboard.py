@@ -155,8 +155,8 @@ def format_scoreboard(rows: list[ScoreRow], plugin: Plugin[Any]) -> str:
         ("in tok", lambda r: f"{r.avg_input_tokens:,.0f}", False),
         ("out tok", lambda r: f"{r.avg_output_tokens:,.0f}", False),
         ("reasoning", lambda r: f"{r.avg_reasoning_tokens:,.0f}", False),
-        ("cost", lambda r: _cost(r.avg_cost_usd), False),
-        ("total", lambda r: _cost(r.total_cost_usd), False),
+        ("cost", lambda r: cost_cell(r.avg_cost_usd), False),
+        ("total", lambda r: cost_cell(r.total_cost_usd), False),
         ("time", lambda r: f"{r.avg_wall_time_ms / 1000:.1f}s", False),
     ]
     # (note, attempts only), joined and wrapped
@@ -205,5 +205,5 @@ def _count(total: float) -> str:
     return str(int(total)) if total.is_integer() else f"{total:.1f}"
 
 
-def _cost(cost: float | None) -> str:
+def cost_cell(cost: float | None) -> str:
     return "?" if cost is None else f"${cost:.4f}"

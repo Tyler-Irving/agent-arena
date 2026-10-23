@@ -6,7 +6,7 @@ from arena.core.lineup import Lineup
 from arena.core.plugin import Outcome, Session, Wording
 from arena.core.runlog import RunLog
 from arena.plugins.mafia import report
-from arena.plugins.mafia.game import MAX_PLAYERS, MIN_PLAYERS
+from arena.plugins.mafia.game import DEFAULT_PLAYERS, MAX_PLAYERS, MIN_PLAYERS
 from arena.plugins.mafia.loop import EVENTS_SCHEMA, MafiaGame
 
 GAMES = 10  # game-01 .. game-10, each its own seeded deal
@@ -15,7 +15,7 @@ GAMES = 10  # game-01 .. game-10, each its own seeded deal
 class MafiaSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    players: int = Field(7, ge=MIN_PLAYERS, le=MAX_PLAYERS)
+    players: int = Field(DEFAULT_PLAYERS, ge=MIN_PLAYERS, le=MAX_PLAYERS)
 
 
 class Game(BaseModel):

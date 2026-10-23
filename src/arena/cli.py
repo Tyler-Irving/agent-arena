@@ -278,8 +278,11 @@ def main() -> None:
     p_report.add_argument(
         "--since", type=positive_int, metavar="RUN_ID", help="only count this run and later ones"
     )
+    reporters = [name for name, p in PLUGINS.items() if isinstance(p, Reports)]
     p_report.add_argument(
-        "--plugin", default=DEFAULT_PLUGIN, help=f"whose runs to report on (default: {DEFAULT_PLUGIN})"
+        "--plugin",
+        default=reporters[0] if reporters else DEFAULT_PLUGIN,
+        help=f"whose runs to report on; plugins with a report: {', '.join(reporters)} (default: %(default)s)",
     )
 
     args = parser.parse_args()

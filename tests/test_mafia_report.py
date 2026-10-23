@@ -8,7 +8,7 @@ from scripted import MAFIA_WINS, TOWN_WINS, play_mafia
 from arena import cli
 from arena.core.events import read_events
 from arena.core.runlog import RunLog
-from arena.plugins.mafia.report import CLAIM, format_report, load_games
+from arena.plugins.mafia.report import CLAIM, format_report, load_games, report
 
 STRONG_MAFIA = {
     "narrator": "fake/narr",
@@ -79,6 +79,13 @@ def three_games(monkeypatch, tmp_path) -> RunLog:
     return log
 
 
+def section(text: str, heading: str) -> list[str]:
+    """The table rows under `heading`, without its header and rule."""
+    lines = text.splitlines()
+    start = lines.index(heading) + 3
+    return lines[start : lines.index("", start)]
+
+
 def tables(report: str) -> str:
     """The report without its closing notes, wall times masked."""
     body = report[: report.index("\nRates come with")]
@@ -124,13 +131,14 @@ def test_runs_from_before_events_take_their_models_from_the_calls_table(monkeypa
                 problem_id=e.task_id,
                 role=e.role,
                 model=e.model or "",
-                think=None,
+                think=False if (e.role or "").startswith("mafia:") else None,
                 system="",
                 messages=[],
             )
     log.db.execute("DELETE FROM events")
     [game] = load_games(log.db, "mafia", None)
-    assert (game.mafia_model, game.town_model) == ("strong", "weak")
+    # a role's think setting is part of its model, so thinking on and off don't blend
+    assert (game.mafia_model, game.town_model) == ("strong (no think)", "weak")
 
 
 def test_since_and_player_count(monkeypatch, tmp_path) -> None:
@@ -162,6 +170,7 @@ def test_unscored_games_are_left_out(monkeypatch, tmp_path) -> None:
         "Night 1 I checked Gray: not mafia.",
         "Good morning folks. I checked Finley—he’s not mafia.",
         "Emery is mafia per my last check.",
+        "I investigated Drew on night 2.",
         "I’m the detective, trust me.",
     ],
 )
@@ -176,6 +185,7 @@ def test_claims_are_matched(speech: str) -> None:
         "Whoever is the detective should speak up.",
         "I'm a villager with no role.",
         "The detective checked nobody we know of.",
+        "I checked the vote record and Blake keeps dodging.",
     ],
 )
 def test_non_claims_are_not_matched(speech: str) -> None:
@@ -193,3 +203,27 @@ def test_cli_report(monkeypatch, tmp_path, capsys) -> None:
     assert capsys.readouterr().err == "code_bounty has no report; plugins with one: mafia\n"
     assert cli.show_report("chess", None) == 2
     assert "unknown plugin 'chess'" in capsys.readouterr().err
+
+
+def test_a_database_without_mafia_runs_has_no_games(tmp_path) -> None:
+    log = RunLog(tmp_path / "arena.db")  # no Mafia run yet, so no mafia_events table either
+    assert report(log, "mafia", None) == "no games yet"
+
+
+def test_an_explicit_default_player_count_is_the_same_deal(monkeypatch, tmp_path) -> None:
+    play_mafia(monkeypatch, tmp_path, TOWN_WINS)
+    log, _ = play_mafia(monkeypatch, tmp_path, TOWN_WINS, name="mafia-seven", settings={"players": 7})
+    games = load_games(log.db, "mafia", None)
+    assert [(g.lineup, g.deal) for g in games] == [
+        ("mafia-fake", "game-01"),
+        ("mafia-seven [players=7]", "game-01"),
+    ]
+
+
+def test_a_model_on_both_sides_is_not_against_other_models(monkeypatch, tmp_path) -> None:
+    roles = {"narrator": "fake/narr", "mafia": "fake/x", "detective": "fake/y", "villager": "fake/x"}
+    log, _ = play_mafia(monkeypatch, tmp_path, MAFIA_WINS, roles=roles)
+    text = format_report(load_games(log.db, "mafia", None), None)
+    rows = {line.split("  ")[0]: line for line in section(text, "Win rate by model and side, across lineups")}
+    # x won as mafia, but x also filled the town's villager seats
+    assert re.split(r"\s{2,}", rows["x"]) == ["x", "1/1 100%", "-", "-", "-"]

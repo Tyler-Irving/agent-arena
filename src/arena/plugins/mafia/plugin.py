@@ -28,7 +28,9 @@ class Mafia:
     max_calls = 60
     uses_attempts = False
     # score 1.0 = town won, so the summed scores count town wins
-    wording = Wording(task="game", passed="town won", rate="town win", summary="town won {passed}/{scored}")
+    wording = Wording(
+        task="game", tasks="games", passed="town won", rate="town win", summary="town won {passed}/{scored}"
+    )
     schema = EVENTS_SCHEMA
 
     def load_tasks(self, selector: str | None) -> list[Game]:

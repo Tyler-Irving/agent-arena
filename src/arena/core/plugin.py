@@ -11,7 +11,7 @@ import asyncio
 import time
 from typing import Any, Protocol
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from arena.core.lineup import Lineup, RoleConfig
 from arena.core.runlog import RunLog
@@ -28,10 +28,20 @@ class TaskSpec(Protocol):
 class Wording(BaseModel):
     """How the CLI and the scoreboard talk about a plugin's tasks and scores."""
 
-    task: str  # one task: "3 problem(s)", "no problems match", "per-problem averages"
+    task: str  # one task: "3 problem(s)", "per-problem averages"
+    tasks: str  # more than one: "no problems match"
     passed: str  # the scoreboard column that sums the scores, e.g. "passed"
     rate: str  # the score rate: its scoreboard column, and "<rate> rate" in the notes, e.g. "pass"
     summary: str  # a run's score in its summary line, from {passed} and {scored}: "{passed}/{scored} passed"
+
+    @model_validator(mode="after")
+    def _summary_formats(self) -> "Wording":
+        # Fails when the plugin loads, not after a whole (maybe paid) run.
+        try:
+            self.summary.format(passed=1, scored=1)
+        except (KeyError, IndexError, ValueError) as e:
+            raise ValueError(f"summary {self.summary!r} may only use {{passed}} and {{scored}}") from e
+        return self
 
 
 class Plugin[T: TaskSpec](Protocol):

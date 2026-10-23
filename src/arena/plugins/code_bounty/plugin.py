@@ -14,7 +14,9 @@ class CodeBounty:
     }
     max_calls = 20  # model calls per problem, whatever the lineup
     uses_attempts = True
-    wording = Wording(task="problem", passed="passed", rate="pass", summary="{passed}/{scored} passed")
+    wording = Wording(
+        task="problem", tasks="problems", passed="passed", rate="pass", summary="{passed}/{scored} passed"
+    )
     schema = ATTEMPTS_SCHEMA
 
     def load_tasks(self, selector: str | None) -> list[Problem]:

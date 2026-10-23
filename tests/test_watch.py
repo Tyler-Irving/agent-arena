@@ -229,7 +229,9 @@ class Echo:
     modes: dict[str, set[str]] = {"echo": {"speaker"}}
     max_calls = 2
     uses_attempts = False
-    wording = Wording(task="echo", passed="passed", rate="pass", summary="{passed}/{scored} passed")
+    wording = Wording(
+        task="echo", tasks="echoes", passed="passed", rate="pass", summary="{passed}/{scored} passed"
+    )
     schema = ""
 
     def load_tasks(self, selector: str | None) -> list:

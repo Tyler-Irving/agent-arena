@@ -72,7 +72,7 @@ async def run(
     words = plugin.wording
     problems = plugin.load_tasks(problem)
     if not problems:
-        print(f"no {words.task}s match {problem!r}", file=sys.stderr)
+        print(f"no {words.tasks} match {problem!r}", file=sys.stderr)
         return 2
 
     roles = ", ".join(f"{role}={cfg.model}" for role, cfg in lineup.roles.items())
@@ -170,7 +170,7 @@ def show_scoreboard(plugin_name: str, since: int | None) -> int:
     except KeyError as e:
         print(e.args[0], file=sys.stderr)
         return 2
-    rows = scoreboard(get_runlog(), plugin_name, since=since)
+    rows = scoreboard(get_runlog(), plugin, since=since)
     if not rows:
         if since:
             print(f"no runs from run {since} on")
@@ -188,7 +188,7 @@ def first_lineup(plugin_name: str) -> str | None:
     """The first lineup for the plugin in config/lineups.yaml, if the file loads and has one."""
     try:
         lineups = load_lineups(PLUGINS, DEFAULT_PLUGIN)
-    except (OSError, ValueError):
+    except Exception:  # missing, unparseable or invalid: the hint is only a nicety, so go without
         return None
     return next((name for name, lineup in lineups.items() if lineup.plugin == plugin_name), None)
 
@@ -223,11 +223,11 @@ def main() -> None:
         help=f"provider/model to call, repeatable (default: {', '.join(SMOKE_MODELS)})",
     )
 
-    p_run = sub.add_parser("run", help="run problems with a lineup")
+    p_run = sub.add_parser("run", help="run a lineup on its plugin's tasks")
     p_run.add_argument("--lineup", required=True, help="lineup name from config/lineups.yaml")
     p_run.add_argument("--problem", "--game", help='one problem or game, e.g. "001" or "03" (default: all)')
     p_run.add_argument(
-        "--repeat", type=positive_int, default=1, help="run the problems this many times (default: 1)"
+        "--repeat", type=positive_int, default=1, help="run them all this many times (default: 1)"
     )
     p_run.add_argument("--watch", action="store_true", help="show a live view of the run")
     p_run.add_argument("--hide-roles", action="store_true", help=HIDE_ROLES_HELP)

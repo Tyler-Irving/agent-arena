@@ -7,10 +7,14 @@ say in the wording, so any change to it shows up as a diff.
 import asyncio
 import re
 
+import pytest
+import yaml
 from scripted import TOWN_WINS, grade, mafia_complete, reply
 
 from arena import cli
 from arena.core import plugin as core_plugin
+from arena.core.lineup import LINEUPS_FILE
+from arena.core.plugin import Wording
 from arena.core.runlog import RunLog
 from arena.core.taskboard import SqliteTaskBoard
 from arena.plugins.code_bounty import loop
@@ -67,6 +71,12 @@ no runs from run 3 on
 )
 
 
+def first_lineup(plugin: str) -> str:
+    """The plugin's first lineup in config/lineups.yaml, which the empty-scoreboard hint names."""
+    lineups = yaml.safe_load(LINEUPS_FILE.read_text())
+    return next(name for name, cfg in lineups.items() if cfg.get("plugin", "code_bounty") == plugin)
+
+
 def wall_times(text: str) -> str:
     return re.sub(r"\d+\.\ds\b", "Ns", text)
 
@@ -104,7 +114,7 @@ def test_code_bounty_no_match_and_scoreboards_are_unchanged(monkeypatch, tmp_pat
     assert cli.show_scoreboard("code_bounty", None) == 0
     out = capsys.readouterr()
     assert out.err == "no problems match '999'\n"
-    assert out.out == "no runs yet; try `arena run --lineup haiku-solo`\n"
+    assert out.out == f"no runs yet; try `arena run --lineup {first_lineup('code_bounty')}`\n"
 
     assert asyncio.run(cli.run("haiku-solo", "001", repeat=2)) == 0
     capsys.readouterr()
@@ -123,7 +133,7 @@ def test_mafia_speaks_of_games_and_town_wins_without_attempts(monkeypatch, tmp_p
     assert cli.show_scoreboard("mafia", None) == 0
     out = capsys.readouterr()
     assert out.err == "no games match '11'\n"
-    assert out.out == "no runs yet; try `arena run --lineup mafia-haiku`\n"
+    assert out.out == f"no runs yet; try `arena run --lineup {first_lineup('mafia')}`\n"
 
     assert asyncio.run(cli.run("mafia-gptoss", "01", repeat=2)) == 0
     out = capsys.readouterr().out
@@ -142,3 +152,16 @@ def test_mafia_speaks_of_games_and_town_wins_without_attempts(monkeypatch, tmp_p
         "per run = lowest-highest town win rate of a single full run (- if none); tokens, cost and",
         "time are per-game averages; total is all runs; ? = unpriced model",
     ]
+
+
+def test_no_hint_when_the_lineups_file_does_not_load(monkeypatch, tmp_path, capsys) -> None:
+    fake_bounty(monkeypatch, tmp_path, [], [])
+    monkeypatch.setattr(cli, "load_lineups", lambda *args: yaml.safe_load("a: [unclosed"))
+    assert cli.show_scoreboard("code_bounty", None) == 0
+    assert capsys.readouterr().out == "no runs yet\n"
+
+
+@pytest.mark.parametrize("summary", ["won {pased}/{scored}", "won {0}", "won {passed"])
+def test_a_summary_with_unknown_placeholders_is_rejected_up_front(summary: str) -> None:
+    with pytest.raises(ValueError, match="may only use"):
+        Wording(task="t", tasks="ts", passed="p", rate="r", summary=summary)

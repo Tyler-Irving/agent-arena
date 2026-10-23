@@ -225,7 +225,13 @@ Same deal every time: Blake + Emery mafia, Avery detective (game-01).
   Every fix was mutation-checked: reverting it fails its test.
 
 ## Session 2026-10-23
-- Part 1 fix/mafia-wording: built (gaps #2, #6 below; skipif root on the 0o555 watch test). 236 tests.
+- Part 1 fix/mafia-wording: built (gaps #2, #6 below; skipif root on the 0o555 watch test).
+  /code-review: 8 findings, all fixed: hint lookup now survives any lineups.yaml error; a plugin without
+  attempts no longer splits scoreboard rows by runs.max_attempts (LIMIT = CASE WHEN :attempts ...;
+  scoreboard() takes the plugin); Wording.summary is checked at load; Wording.tasks plural; neutral
+  run/--repeat help; tests derive the hint's lineup from lineups.yaml; the duel settings test formats
+  with a no-attempts plugin; format_scoreboard tags attempts-only columns/notes once (format_table
+  helper). Two fixes mutation-checked (reverting fails a test). 241 tests.
 
 ## Mafia gaps (core assumptions Mafia would still hit; not fixed yet)
 1. PARTLY: the score is decided: 1.0 = town won, so the scoreboard's pass column is the town win rate.

@@ -34,7 +34,7 @@ class Duel:
     modes: dict[str, set[str]] = {"duel": {"player", "judge"}}
     max_calls = 5
     uses_attempts = False
-    wording = Wording(task="round", passed="won", rate="win", summary="won {passed}/{scored}")
+    wording = Wording(task="round", tasks="rounds", passed="won", rate="win", summary="won {passed}/{scored}")
     schema = "CREATE TABLE IF NOT EXISTS duel_rounds (problem_id TEXT, winner TEXT);"
 
     def load_tasks(self, selector: str | None) -> list[Round]:

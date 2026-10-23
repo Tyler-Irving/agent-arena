@@ -346,8 +346,18 @@ Same deal every time: Blake + Emery mafia, Avery detective (game-01).
     user, NOT changed (changing it mid-matchup would split the data): require a majority of the
     living, or count abstentions, to eliminate?
     (run 28, Haiku mirror on game-01, was a town win; run 38's game-01 a mafia win: same deal, noise.)
-  - Still to run: mafia-sonnet-vs-haiku, mafia-haiku-vs-sonnet, mafia-gptoss-vs-haiku,
-    mafia-haiku-vs-gptoss. Original proposal: Per-game costs measured so far:
+  - run 39 mafia-sonnet-vs-haiku (Sonnet mafia, Haiku town, 10 games): TOWN WON 7/10, $0.5349 (Sonnet
+    87 calls $0.4797), 263 calls. Every town win: a mafia out day 1, detective killed night 2, the other
+    mafia out day 2; town votes on mafia 7/7 in 6 of the 7. 0 invalid replies, 8 null votes. Leak audit
+    clean. Against run 38 (Haiku mafia, town won 1/10), Sonnet is the WORSE mafia here. Why, from the
+    speeches: Sonnet mafia are the first to push on day 1 (call someone "vague", challenge the
+    detective's claim), and both partners often use the same framing; Haiku town reads exactly that
+    ("Blake and Avery both attacked Casey ... nearly the same framing"). Sonnet mafia also split their
+    day-1 votes or vote out an exposed partner (games 01, 05), while Haiku mafia sit in the "let's wait"
+    consensus and vote together, which plurality rewards. (Run 30, one Sonnet-mafia game, was a mafia
+    win: one game was noise.)
+  - Still to run: mafia-haiku-vs-sonnet, mafia-gptoss-vs-haiku, mafia-haiku-vs-gptoss.
+    Original proposal: Per-game costs measured so far:
   mafia-haiku $0.0100 (29 calls), mafia-sonnet-vs-haiku $0.0394 (20 calls, a short game), mafia-haiku-
   vs-sonnet $0.1244 (29 calls). Per call: Sonnet ~$0.0045 as mafia, ~$0.0075 as town; Haiku ~$0.0003-5.
   A game is 20-32 calls, so estimates per game: haiku ~$0.010, sonnet-vs-haiku ~$0.04-0.06,

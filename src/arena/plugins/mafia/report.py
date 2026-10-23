@@ -6,8 +6,12 @@ side, model, deal and ending. It stores nothing new: it reads what games
 already keep, for every run since the plugin's first:
 - results: the score (1.0 = town won), calls, cost, wall time, and the metrics
   (winner, nights/days, who left when, town votes, checks, invalid replies)
-- calls, and call_started events: which model played each role ("<role>:<name>")
-- mafia_events: who held which role, and the detective's speeches
+- each player's model: metrics["models"] where the game recorded it, else the calls (or
+  call_started events) its player made ("<role>:<name>")
+- mafia_events: who held which role, each vote, and the detective's speeches
+
+Mixed-seat lineups (mode mixed) give each model one mafia and two or three town
+seats, so their games get their own per-player tables instead of side-level rates.
 
 (The events table alone would do for most of it, but runs from before
 `arena watch` have none.) Every rate is shown with its count, since a handful of games is
@@ -17,13 +21,13 @@ noise.
 import json
 import re
 import sqlite3
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
 from arena.core.runlog import RunLog
 from arena.core.scoreboard import cost_cell, format_table, settings_label
-from arena.plugins.mafia.game import DEFAULT_PLAYERS
+from arena.plugins.mafia.game import DEFAULT_PLAYERS, deal, seat_groups
 
 GAMES = """
 SELECT results.run_id, results.problem_id, results.score, results.metrics, results.total_calls,
@@ -34,14 +38,19 @@ WHERE runs.plugin = :plugin AND runs.id >= :since AND results.score IS NOT NULL
 ORDER BY results.id
 """
 
-# The model behind each player's calls in each game ("mafia:Blake" -> a model, and its think
-# setting). The router logs every real call to the calls table; a game with no call rows there
-# (a scripted test) falls back to its call_started events.
+# The model behind each player's calls ("mafia:Blake" -> a model, and its think setting), for
+# games from before metrics["models"]. The router logs every real call to the calls table; a game
+# with no call rows there (a scripted test) falls back to its call_started events.
 MODELS = """
 SELECT calls.run_id, calls.problem_id, calls.role, calls.model, calls.think
 FROM calls
 JOIN runs ON runs.id = calls.run_id
 WHERE runs.plugin = :plugin AND runs.id >= :since
+  AND NOT EXISTS (
+      SELECT 1 FROM results
+      WHERE results.run_id = calls.run_id AND results.problem_id = calls.problem_id
+        AND json_extract(results.metrics, '$.models') IS NOT NULL
+  )
 UNION
 SELECT events.run_id, events.problem_id, events.role, events.model, NULL
 FROM events
@@ -50,6 +59,26 @@ WHERE runs.plugin = :plugin AND runs.id >= :since AND events.kind = 'call_starte
   AND NOT EXISTS (
       SELECT 1 FROM calls WHERE calls.run_id = events.run_id AND calls.problem_id = events.problem_id
   )
+  AND NOT EXISTS (
+      SELECT 1 FROM results
+      WHERE results.run_id = events.run_id AND results.problem_id = events.problem_id
+        AND json_extract(results.metrics, '$.models') IS NOT NULL
+  )
+"""
+
+DEALT = """
+SELECT mafia_events.run_id, mafia_events.problem_id, mafia_events.actor, mafia_events.text
+FROM mafia_events
+JOIN runs ON runs.id = mafia_events.run_id
+WHERE runs.plugin = :plugin AND runs.id >= :since AND mafia_events.kind = 'role'
+ORDER BY mafia_events.id
+"""
+
+VOTES = """
+SELECT mafia_events.run_id, mafia_events.problem_id, mafia_events.actor, mafia_events.target
+FROM mafia_events
+JOIN runs ON runs.id = mafia_events.run_id
+WHERE runs.plugin = :plugin AND runs.id >= :since AND mafia_events.kind = 'vote'
 """
 
 DETECTIVE_SPEECHES = """
@@ -75,6 +104,16 @@ CLAIM = re.compile(
 
 
 @dataclass
+class Seat:
+    name: str
+    role: str
+    model: str  # "?" if unknown (an older game, and the player never made a call)
+    out: str | None  # "night 2" (killed), "day 1" (voted out); None if alive at the end
+    votes: int  # votes this player cast for someone (not "none")
+    votes_on_mafia: int
+
+
+@dataclass
 class Game:
     run_id: int
     game_id: str
@@ -97,6 +136,14 @@ class Game:
     detective_out: str | None  # "night 2", "day 1"; None if alive at the end
     detective_claimed: bool
     invalid: dict[str, int]
+    seats: list[Seat]
+    mixed: bool  # a mixed-seat game (mode mixed): two models, each with one mafia and some town seats
+    seats_a: str | None  # mixed: the model in group a, which tells the two halves of a pair apart
+
+    @property
+    def matchup(self) -> str:
+        """Mixed: the two models, "a vs b" in name order."""
+        return " vs ".join(sorted({s.model for s in self.seats}))
 
 
 def report(log: RunLog, plugin: str, since: int | None) -> str:
@@ -108,11 +155,17 @@ def load_games(db: sqlite3.Connection, plugin: str, since: int | None) -> list[G
     rows = db.execute(GAMES, params).fetchall()
     if not rows:  # also before any Mafia run has created mafia_events
         return []
-    roles: dict[tuple[int, str], dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
+    called: dict[tuple[int, str], dict[str, str]] = defaultdict(dict)  # name -> model, from calls
     for run_id, game_id, player, model, think in db.execute(MODELS, params):
-        role, _, name = player.partition(":")
+        _, _, name = player.partition(":")
         if name:  # not the narrator
-            roles[run_id, game_id][role].add(model_label(model, think))
+            called[run_id, game_id][name] = model_label(model, think)
+    dealt: dict[tuple[int, str], dict[str, str]] = defaultdict(dict)  # name -> role, in seat order
+    for run_id, game_id, name, role in db.execute(DEALT, params):
+        dealt[run_id, game_id][name] = role
+    votes: dict[tuple[int, str], list[tuple[str, str | None]]] = defaultdict(list)
+    for run_id, game_id, voter, target in db.execute(VOTES, params):
+        votes[run_id, game_id].append((voter, target))
     claimed = {
         (run_id, game_id)
         for run_id, game_id, text in db.execute(DETECTIVE_SPEECHES, params)
@@ -122,8 +175,32 @@ def load_games(db: sqlite3.Connection, plugin: str, since: int | None) -> list[G
     for r in rows:
         run_id, game_id, score, metrics, calls, cost, wall, lineup, settings = r
         m = json.loads(metrics)
-        models = roles[run_id, game_id]
-        detective = next((o["when"] for o in m["out"] if o["role"] == "detective"), None)
+        key = run_id, game_id
+        recorded = {name: model_label(v["model"], v["think"]) for name, v in m.get("models", {}).items()}
+        out = {o["name"]: o["when"] for o in m["out"]}
+        role_of = dealt[key]
+        cast, on_mafia = Counter[str](), Counter[str]()
+        for voter, target in votes[key]:
+            cast[voter] += target is not None
+            on_mafia[voter] += role_of.get(target or "") == "mafia"
+        seats = [
+            Seat(
+                name=name,
+                role=role,
+                model=recorded.get(name) or called[key].get(name, "?"),
+                out=out.get(name),
+                votes=cast[name],
+                votes_on_mafia=on_mafia[name],
+            )
+            for name, role in role_of.items()
+        ]
+        models: dict[str, set[str]] = defaultdict(set)
+        for seat in seats:
+            if seat.model != "?":
+                models[seat.role].add(seat.model)
+        # recorded since mixed seats; older games all had one model per role
+        mixed = m.get("mode", "game") == "mixed"
+        detective = out.get(next((s.name for s in seats if s.role == "detective"), ""))
         games.append(
             Game(
                 run_id=run_id,
@@ -133,8 +210,8 @@ def load_games(db: sqlite3.Connection, plugin: str, since: int | None) -> list[G
                 town_won=score == 1.0,
                 mafia=m["mafia"],
                 ended=f"day {m['days']}" if m["days"] == m["nights"] else f"night {m['nights']}",
-                mafia_model=side_model(models, ["mafia"]),
-                town_model=side_model(models, ["detective", "villager"]),
+                mafia_model=mixed_label(models) if mixed else side_model(models, ["mafia"]),
+                town_model=mixed_label(models) if mixed else side_model(models, ["detective", "villager"]),
                 mafia_models=frozenset(models["mafia"]),
                 town_models=frozenset(models["detective"] | models["villager"]),
                 calls=calls,
@@ -147,9 +224,23 @@ def load_games(db: sqlite3.Connection, plugin: str, since: int | None) -> list[G
                 detective_out=detective,
                 detective_claimed=(run_id, game_id) in claimed,
                 invalid=m["invalid"],
+                seats=seats,
+                mixed=mixed,
+                seats_a=seats_a_model(game_id, seats) if mixed else None,
             )
         )
     return games
+
+
+def seats_a_model(game_id: str, seats: list[Seat]) -> str:
+    if len(seats) != DEFAULT_PLAYERS:  # the deal's role rows are missing
+        return "?"
+    groups = seat_groups(deal(game_id, len(seats)))
+    return next((s.model for s in seats if groups.get(s.name) == "a"), "?")
+
+
+def mixed_label(models: dict[str, set[str]]) -> str:
+    return "mixed: " + " + ".join(sorted(set().union(*models.values())))
 
 
 def side_model(models: dict[str, set[str]], roles: list[str]) -> str:
@@ -171,18 +262,37 @@ def format_report(games: list[Game], since: int | None) -> str:
         return f"no games from run {since} on" if since else "no games yet"
     runs = sorted({g.run_id for g in games})
     title = f"{len(games)} game(s) from {len(runs)} run(s), runs {runs[0]}-{runs[-1]}"
+    sided = [g for g in games if not g.mixed]
+    mixed = [g for g in games if g.mixed]
     sections = [
         ("Town win rate by lineup", by_lineup(games)),
-        ("Win rate by model and side, across lineups", by_model(games)),
+        *([("Win rate by model and side, across lineups", by_model(sided))] if sided else []),
         ("By deal (each game id deals the same seats in every lineup)", by_deal(games)),
         ("How games end", endings(games)),
         ("Town play by lineup", town_play(games)),
         ("Invalid replies, calls and cost per game, by lineup", costs(games)),
+        *(
+            [
+                ("Mixed seats: each model's players, by role", mixed_players(mixed)),
+                ("Mixed seats: town win rate by the detective's model", mixed_detectives(mixed)),
+            ]
+            if mixed
+            else []
+        ),
     ]
-    notes = [
-        "Rates come with their counts (won/games); one game per cell is noise, not evidence.",
-        'A game with one model on both sides counts for it as mafia and as town; "vs other models"',
-        "leaves those games out.",
+    notes = ["Rates come with their counts (won/games); one game per cell is noise, not evidence."]
+    if sided:
+        notes += [
+            'A game with one model on both sides counts for it as mafia and as town; "vs other',
+            'models" leaves those games out.',
+        ]
+    if mixed:
+        notes += [
+            "Mixed-seat games get their own tables, per matchup; a pair's two halves swap the seats,",
+            "so a model's rates mean most when both halves ran the same deals.",
+            *unbalanced(mixed),
+        ]
+    notes += [
         'claimed = the detective said "I\'m the detective" or "I checked <name>" in a speech (a',
         "text match: a claim made only by implication is missed).",
     ]
@@ -317,3 +427,68 @@ def costs(games: list[Game]) -> list[str]:
             ]
         )
     return format_table(["lineup", "games", "invalid (kill/check/vote)", "calls", "cost", "time"], rows)
+
+
+def mixed_players(games: list[Game]) -> list[str]:
+    """Per matchup, model and role in mixed-seat games: who was voted out, killed, alive at the end,
+    and how their own votes landed. For mafia, "voted out" is being caught."""
+    rows = []
+    for matchup, gs in grouped(games, lambda g: g.matchup).items():
+        seats = [s for g in gs for s in g.seats]
+        for model in sorted({s.model for s in seats}):
+            for role in ("mafia", "detective", "villager"):
+                group = [s for s in seats if s.model == model and s.role == role]
+                if not group:
+                    continue
+                n = len(group)
+                town = role != "mafia"
+                rows.append(
+                    [
+                        matchup,
+                        model,
+                        role,
+                        str(n),
+                        rate(sum((s.out or "").startswith("day") for s in group), n),
+                        rate(sum((s.out or "").startswith("night") for s in group), n),
+                        rate(sum(s.out is None for s in group), n),
+                        rate(sum(s.votes_on_mafia for s in group), sum(s.votes for s in group))
+                        if town
+                        else "-",
+                    ]
+                )
+    headers = [
+        "matchup",
+        "model",
+        "role",
+        "players",
+        "voted out",
+        "killed",
+        "alive at end",
+        "their votes on mafia",
+    ]
+    return format_table(headers, rows, left=3)
+
+
+def mixed_detectives(games: list[Game]) -> list[str]:
+    def detective(g: Game) -> str:
+        return next((s.model for s in g.seats if s.role == "detective"), "?")
+
+    rows = [
+        [matchup, model, str(len(gs)), rate(sum(g.town_won for g in gs), len(gs))]
+        for matchup, by_matchup in grouped(games, lambda g: g.matchup).items()
+        for model, gs in grouped(by_matchup, detective).items()
+    ]
+    return format_table(["matchup", "detective", "games", "town won"], rows, left=2)
+
+
+def unbalanced(games: list[Game]) -> list[str]:
+    """A note per matchup whose two halves (which model sat in group a) ran different deals."""
+    notes = []
+    for matchup, gs in grouped(games, lambda g: g.matchup).items():
+        halves = {
+            model: sorted(g.game_id for g in gs if g.seats_a == model) for model in matchup.split(" vs ")
+        }
+        if len({tuple(deals) for deals in halves.values()}) > 1:
+            counts = ", ".join(f"{len(deals)} with {model} in seats_a" for model, deals in halves.items())
+            notes.append(f"UNBALANCED {matchup}: {counts}; run the other half on the same deals.")
+    return notes

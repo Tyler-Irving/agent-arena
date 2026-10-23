@@ -58,7 +58,7 @@ class Lineup(BaseModel):
 
 
 def check_roles(lineup: Lineup, plugin: "Plugin[Any]") -> None:
-    """Raise ValueError unless the lineup is for `plugin`, in one of its modes, with that mode's roles."""
+    """Raise ValueError unless the lineup is for `plugin`, in one of its modes, with only its roles."""
     if lineup.plugin != plugin.name:
         raise ValueError(f"lineup {lineup.name!r} is for plugin {lineup.plugin!r}, not {plugin.name!r}")
     if lineup.mode not in plugin.modes:
@@ -69,6 +69,10 @@ def check_roles(lineup: Lineup, plugin: "Plugin[Any]") -> None:
     missing = plugin.modes[lineup.mode] - lineup.roles.keys()
     if missing:
         raise ValueError(f"{lineup.mode} lineup {lineup.name!r} is missing roles: {sorted(missing)}")
+    # A role the mode doesn't use would be silently ignored, e.g. `coder:` in a solo lineup.
+    extra = lineup.roles.keys() - plugin.modes[lineup.mode]
+    if extra:
+        raise ValueError(f"{lineup.mode} lineup {lineup.name!r} has roles it doesn't use: {sorted(extra)}")
 
 
 def check_lineup(lineup: Lineup, plugin: "Plugin[Any]") -> None:

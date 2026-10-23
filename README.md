@@ -167,6 +167,12 @@ model's win rate as mafia and as town (also leaving out games with one model on 
 town wins per deal, how games end (which night or day), town votes on mafia, detective checks,
 claims and survival, invalid replies, calls and cost per game. Every rate comes with its count.
 
+A model's voice can give its side away: with one model per side, a capable town beat another
+model's mafia in 25 of 30 games and its own model's mafia in 2 of 20. Mixed-seat lineups
+(`mode: mixed`, e.g. `mafia-mixed-haiku-sonnet` and its swap `mafia-mixed-sonnet-haiku`) give each of
+two models one mafia and two or three town seats, so the report can compare players by model and role
+instead.
+
 Lineups such as `mafia-sonnet-vs-haiku` put a different model on each side. Every event goes to
 the `mafia_events` table, and every prompt to `calls`, so a game can be read back per player.
 

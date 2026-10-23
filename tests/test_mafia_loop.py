@@ -6,15 +6,17 @@ import re
 from pathlib import Path
 
 import pytest
+from scripted import MIXED_ROLES, play_mafia
 
 from arena.core import orchestrator
 from arena.core import plugin as core_plugin
+from arena.core.events import read_events
 from arena.core.lineup import Lineup, load_lineups
 from arena.core.runlog import RunLog
 from arena.core.taskboard import SqliteTaskBoard
 from arena.models.router import ModelResponse
 from arena.plugins import DEFAULT_PLUGIN, PLUGINS, get_plugin
-from arena.plugins.mafia.game import deal
+from arena.plugins.mafia.game import deal, seat_groups
 
 MAFIA = get_plugin("mafia")
 NARRATOR_MARK = "NARRATOR-MARK-7f3a"  # appears only in narrator replies
@@ -133,6 +135,19 @@ def test_town_wins(monkeypatch, tmp_path, capsys) -> None:
         "town_votes": 7,
         "town_votes_on_mafia": 7,
         "invalid": {"target": 0, "check": 0, "vote": 0},
+        "mode": "game",
+        "models": {
+            name: {"model": ROLES[role], "think": None}
+            for name, role in [
+                ("Finley", "villager"),
+                ("Blake", "mafia"),
+                ("Casey", "villager"),
+                ("Gray", "villager"),
+                ("Drew", "villager"),
+                ("Avery", "detective"),
+                ("Emery", "mafia"),
+            ]
+        },
     }
     score, passed, metrics = log.db.execute("SELECT score, passed, metrics FROM results").fetchone()
     assert (score, passed, json.loads(metrics)["winner"]) == (1.0, 1, "town")
@@ -345,3 +360,39 @@ def test_five_player_game(monkeypatch, tmp_path) -> None:
     _, _, outcome, _ = _play(monkeypatch, tmp_path, None, lineup=lineup)
     assert outcome.metrics["players"] == 5 and len(outcome.metrics["mafia"]) == 1
     assert outcome.calls <= 25
+
+
+def _mixed(a: str = "a/x", b: str = "a/y", settings: str = "", extra: str = "") -> str:
+    roles = f"narrator: a/n, seats_a: {a}, seats_b: {b}{extra}"
+    return f"m:\n  plugin: mafia\n  mode: mixed\n{settings}  roles: {{ {roles} }}\n"
+
+
+def test_mixed_lineups(tmp_path: Path) -> None:
+    lineup = _load(tmp_path, _mixed())["m"]
+    assert (lineup.mode, lineup.roles["seats_a"].model) == ("mixed", "a/x")
+    with pytest.raises(ValueError, match="mixed seats need 7 players"):
+        _load(tmp_path, _mixed(settings="  settings: { players: 6 }\n"))
+    with pytest.raises(ValueError, match="seats_a and seats_b are the same model"):
+        _load(tmp_path, _mixed(b="a/x"))
+    # think unset v true can send the very same requests, so only explicit on v off is a pair
+    with pytest.raises(ValueError, match="seats_a and seats_b are the same model"):
+        _load(tmp_path, _mixed(b="{ model: a/x, think: true }"))
+    _load(tmp_path, _mixed("{ model: a/x, think: true }", "{ model: a/x, think: false }"))
+    with pytest.raises(ValueError, match=r"mixed lineup 'm' has roles it doesn't use: \['mafia'\]"):
+        _load(tmp_path, _mixed(extra=", mafia: a/z"))
+    with pytest.raises(ValueError, match=r"game lineup 'g' has roles it doesn't use: \['seats_a'\]"):
+        _load(tmp_path, _yaml().replace("villager: ollama/x", "villager: ollama/x, seats_a: a/x"))
+
+
+def test_mixed_seats_call_each_player_with_its_groups_model(monkeypatch, tmp_path) -> None:
+    log, run_id = play_mafia(monkeypatch, tmp_path, TOWN_WINS, roles=MIXED_ROLES, mode="mixed")
+    groups = seat_groups(deal("game-01", 7))
+    calls = [(e.role or "", e.model) for e in read_events(log.db, run_id) if e.kind == "call_started"]
+    players = {role.split(":")[1]: model for role, model in calls if role != "narrator"}
+    assert players == {name: f"fake/{group}" for name, group in groups.items() if name in players}
+    assert {model for role, model in calls if role == "narrator"} == {"fake/narrator"}
+    # roles still name the player's role, and every player's model is recorded, even Finley (killed night 1)
+    assert any(role.startswith("mafia:") for role, _ in calls)
+    metrics = json.loads(log.db.execute("SELECT metrics FROM results").fetchone()[0])
+    recorded = {name: v["model"] for name, v in metrics["models"].items()}
+    assert recorded == {name: f"fake/{group}" for name, group in groups.items()}

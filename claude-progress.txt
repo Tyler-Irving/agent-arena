@@ -5,8 +5,17 @@
   (step 7 = PR #13 plugin interface, tag step-7-plugins; step 8 = PR #14 Mafia plugin, tag step-8-mafia).
 - Session 2026-10-23, three parts (user's plan): 1. fix/mafia-wording (gaps #2 + #6, root skipif),
   2. mafia-gptoss on game-01..10 (free), 3. feat/mafia-report (`arena report --plugin mafia`), then
-  propose a paid matchup plan and stop for approval. All done: PR #18 (wording) and PR #19 (report,
-  stacked on #18) open; paid plan A + C run as runs 38-42 ($1.58). See "Session 2026-10-23" below. Paid runs (anthropic/*) need the user's OK; auto mode
+  propose a paid matchup plan and stop for approval. All done, plus two follow-ups the user asked for:
+  an all-Sonnet game (run 43) and mixed-seat lineups (PR #20, runs 44-47). Paid total $3.67.
+- Three stacked PRs open, review and merge in order: #18 fix/mafia-wording -> main, #19
+  feat/mafia-report -> #18, #20 feat/mafia-mixed-seats -> #19. All pushed; 273 tests on #20's branch.
+  Tag the merges if continuing the step-N convention (e.g. step-10-mafia-report).
+- Main finding: with one model per side, a capable town catches another model's mafia (25/30) but not
+  its own (2/20): a model's voice gives the side away. Mixed seats hide it (town 17/40) and then no
+  mafia-skill gap shows; only "gpt-oss votes less accurately than Haiku" survives. Details under
+  "Session 2026-10-23".
+- Next ideas (not started): more mixed games for power; majority-to-eliminate vote rule (day 1 decides
+  nearly every game). Paid runs (anthropic/*) need the user's OK; auto mode
   blocks them, so the user may run them with `! uv run arena run ...`.
 - GitHub: https://github.com/Tyler-Irving/agent-arena (public). main has steps 1-9, merged
   through one PR per step; each step's tag points at its PR's merge commit (from step 6 on).
@@ -489,6 +498,128 @@ Same deal every time: Blake + Emery mafia, Avery detective (game-01).
     loop, so its own bias needs checking); (c) majority-to-eliminate, which may matter more in mirror
     games where day 1 is a coin flip.
   - Total Mafia spend this session: runs 38-43 = $2.47 (plan $1.58 + Sonnet mirror $0.88).
+  - User chose mixed seats (2026-10-23), branch feat/mafia-mixed-seats (stacked on feat/mafia-report):
+    mode `mixed` (roles narrator, seats_a, seats_b; 7 players). game.seat_groups, seeded
+    "{game_id}:seats": each group gets exactly one mafia and 3 or 2 of the 5 town players (the
+    detective's group varies: a in 4 deals, b in 6), so neither voice points at a side. Lineups in
+    swapped pairs (mafia-mixed-haiku-sonnet / -sonnet-haiku, mafia-mixed-gptoss-haiku / -haiku-gptoss)
+    play every deal with each model in each seat. Loop picks each player's RoleConfig by seat group;
+    metrics["models"] records each player's model (also players killed before their first call).
+    validate_lineup: mixed needs 7 players and two different seat configs (think on v off is allowed);
+    any mode rejects roles it doesn't use. Report: mixed games (2+ models on the mafia side) leave the
+    per-side table and get "each model's players, by role" (voted out = caught, killed, alive, their
+    votes on mafia) and "town win rate by the detective's model". No event change (no EVENTS_VERSION
+    bump); the viewer already showed per-call models.
+    /code-review: 9 findings, 8 fixed (123f991): mixed tables split by matchup + an UNBALANCED note
+    when a pair's halves ran different deals; same model on both seats only as think true v false;
+    metrics["mode"] recorded and read; unused roles rejected in core check_roles (every plugin);
+    model lookup from calls/events only for games without metrics.models; one-pass vote counts;
+    notes only for shown tables; no crash without deal rows. Skipped: re-checking 7 players at run
+    time (validate_lineup runs at load, same as code_bounty's attempt limit). Two fixes mutation-
+    checked. 273 tests.
+    Estimates per pair (20 games): Haiku/Sonnet ~$1.35 (half the seats Sonnet, ~$0.067/game);
+    gpt-oss/Haiku ~$0.10 (Haiku seats only). Ran as runs 44-47 ($1.12 and $0.09), see below.
+  - Mixed-seat runs 44-47 (2026-10-23, user-started; 44/45/46 ran at once, 47 after 46): 40 games,
+    $1.2061 (44 mixed-haiku-sonnet $0.4868, 45 mixed-sonnet-haiku $0.6328, 46 mixed-gptoss-haiku
+    $0.0370, 47 mixed-haiku-gptoss $0.0495). Town won 5/10, 3/10, 4/10, 5/10. Leak audit clean; every
+    player call used its seat group's model (checked against seat_groups); invalid replies: 1 kill
+    target (46), 1 vote (47).
+  - MIXED-SEAT RESULT:
+    * The game is balanced again: town 17/40 (42%), v 4/30 in mirror games (runs 37, 38, 43; Fisher
+      p 0.01) and 25/30 for a capable town against another model's mafia (p 0.0006).
+    * With voices neutralised there is no detectable mafia-skill gap. Each mafia seat was played by
+      both models (counterbalanced), so pairs compare like for like: caught (voted out) only as Haiku 3
+      v only as Sonnet 4 (both 5), sign test p 1.0; Haiku v gpt-oss 6 v 5 (both 4), p 1.0. Caught
+      overall: Haiku 8/20 v Sonnet 9/20; Haiku 10/20 v gpt-oss 9/20.
+    * Town side: Haiku villagers' votes landed on mafia 36/46 (78%) v gpt-oss villagers 17/31 (55%),
+      p 0.044 (gpt-oss also cast fewer votes: more abstentions). Sonnet v Haiku villagers 32/41 v
+      29/41, p 0.61. Town wins by detective model: 4/10 v 4/10 (Haiku/Sonnet), 4/10 v 5/10.
+    * So the earlier "Sonnet strong town / weak mafia, Haiku strong mafia" (runs 38-43) was mostly the
+      voice effect. What survives is weak: gpt-oss is a less accurate voter than Haiku. Caveat: 20
+      games per matchup, 7 and 11 discordant seat pairs, so only large skill gaps would show.
+    * Still true in mixed games: day 1 decides it (21/40 ended night 2, all mafia wins).
+  - `arena report --since 44`:
+
+    40 game(s) from 4 run(s), runs 44-47
+
+    Town win rate by lineup
+    lineup                    mafia                                        town                                         games   town won
+    ------------------------  -------------------------------------------  -------------------------------------------  -----  ---------
+    mafia-mixed-gptoss-haiku  mixed: claude-haiku-5-5 + gpt-oss:20b        mixed: claude-haiku-5-5 + gpt-oss:20b           10  4/10  40%
+    mafia-mixed-haiku-gptoss  mixed: claude-haiku-5-5 + gpt-oss:20b        mixed: claude-haiku-5-5 + gpt-oss:20b           10  5/10  50%
+    mafia-mixed-haiku-sonnet  mixed: claude-haiku-5-5 + claude-sonnet-5-5  mixed: claude-haiku-5-5 + claude-sonnet-5-5     10  5/10  50%
+    mafia-mixed-sonnet-haiku  mixed: claude-haiku-5-5 + claude-sonnet-5-5  mixed: claude-haiku-5-5 + claude-sonnet-5-5     10  3/10  30%
+
+    By deal (each game id deals the same seats in every lineup)
+    game     mafia          games  town won
+    -------  -------------  -----  --------
+    game-01  Blake, Emery       4  2/4  50%
+    game-02  Finley, Emery      4  2/4  50%
+    game-03  Emery, Casey       4  0/4   0%
+    game-04  Finley, Emery      4  3/4  75%
+    game-05  Blake, Emery       4  2/4  50%
+    game-06  Finley, Emery      4  2/4  50%
+    game-07  Avery, Blake       4  3/4  75%
+    game-08  Avery, Finley      4  2/4  50%
+    game-09  Emery, Casey       4  1/4  25%
+    game-10  Avery, Blake       4  0/4   0%
+
+    How games end
+    ended on        games  town won  mafia won
+    ---------  ----------  --------  ---------
+    night 2            21         0         21
+    day 2              17        17          0
+    night 3             2         0          2
+    any night  23/40  57%         0         23
+    any day    17/40  42%        17          0
+
+    Town play by lineup
+    lineup                    games  town votes on mafia  checks found mafia  det. claimed  det. survived  det. voted out
+    ------------------------  -----  -------------------  ------------------  ------------  -------------  --------------
+    mafia-mixed-gptoss-haiku     10           25/47  53%           4/18  22%     9/10  90%      1/10  10%       2/10  20%
+    mafia-mixed-haiku-gptoss     10           35/46  76%           5/16  31%     7/10  70%      0/10   0%       3/10  30%
+    mafia-mixed-haiku-sonnet     10           40/51  78%           9/18  50%     6/10  60%      3/10  30%       1/10  10%
+    mafia-mixed-sonnet-haiku     10           33/49  67%           9/17  53%     5/10  50%      0/10   0%       1/10  10%
+
+    Invalid replies, calls and cost per game, by lineup
+    lineup                    games  invalid (kill/check/vote)  calls     cost  time
+    ------------------------  -----  -------------------------  -----  -------  ----
+    mafia-mixed-gptoss-haiku     10                  1 (1/0/0)   24.0  $0.0037  138s
+    mafia-mixed-haiku-gptoss     10                  1 (0/0/1)   25.6  $0.0049  145s
+    mafia-mixed-haiku-sonnet     10                  0 (0/0/0)   24.8  $0.0487   95s
+    mafia-mixed-sonnet-haiku     10                  0 (0/0/0)   24.1  $0.0633  101s
+
+    Mixed seats: each model's players, by role
+    matchup                                model              role       players   voted out      killed  alive at end  their votes on mafia
+    -------------------------------------  -----------------  ---------  -------  ----------  ----------  ------------  --------------------
+    claude-haiku-5-5 vs claude-sonnet-5-5  claude-haiku-5-5   mafia           20   8/20  40%   0/20   0%    12/20  60%                     -
+    claude-haiku-5-5 vs claude-sonnet-5-5  claude-haiku-5-5   detective       10   1/10  10%   9/10  90%     0/10   0%              5/9  56%
+    claude-haiku-5-5 vs claude-sonnet-5-5  claude-haiku-5-5   villager        40   3/40   8%  13/40  32%    24/40  60%            29/41  71%
+    claude-haiku-5-5 vs claude-sonnet-5-5  claude-sonnet-5-5  mafia           20   9/20  45%   0/20   0%    11/20  55%                     -
+    claude-haiku-5-5 vs claude-sonnet-5-5  claude-sonnet-5-5  detective       10   1/10  10%   6/10  60%     3/10  30%              7/9  78%
+    claude-haiku-5-5 vs claude-sonnet-5-5  claude-sonnet-5-5  villager        40   7/40  18%  13/40  32%    20/40  50%            32/41  78%
+    claude-haiku-5-5 vs gpt-oss:20b        claude-haiku-5-5   mafia           20  10/20  50%   0/20   0%    10/20  50%                     -
+    claude-haiku-5-5 vs gpt-oss:20b        claude-haiku-5-5   detective       10   2/10  20%   7/10  70%     1/10  10%             4/11  36%
+    claude-haiku-5-5 vs gpt-oss:20b        claude-haiku-5-5   villager        40   2/40   5%  14/40  35%    24/40  60%            36/46  78%
+    claude-haiku-5-5 vs gpt-oss:20b        gpt-oss:20b        mafia           20   9/20  45%   0/20   0%    11/20  55%                     -
+    claude-haiku-5-5 vs gpt-oss:20b        gpt-oss:20b        detective       10   3/10  30%   7/10  70%     0/10   0%              3/5  60%
+    claude-haiku-5-5 vs gpt-oss:20b        gpt-oss:20b        villager        40   4/40  10%  13/40  32%    23/40  57%            17/31  55%
+
+    Mixed seats: town win rate by the detective's model
+    matchup                                detective          games   town won
+    -------------------------------------  -----------------  -----  ---------
+    claude-haiku-5-5 vs claude-sonnet-5-5  claude-haiku-5-5      10  4/10  40%
+    claude-haiku-5-5 vs claude-sonnet-5-5  claude-sonnet-5-5     10  4/10  40%
+    claude-haiku-5-5 vs gpt-oss:20b        claude-haiku-5-5      10  4/10  40%
+    claude-haiku-5-5 vs gpt-oss:20b        gpt-oss:20b           10  5/10  50%
+
+    Rates come with their counts (won/games); one game per cell is noise, not evidence.
+    Mixed-seat games get their own tables, per matchup; a pair's two halves swap the seats,
+    so a model's rates mean most when both halves ran the same deals.
+    claimed = the detective said "I'm the detective" or "I checked <name>" in a speech (a
+    text match: a claim made only by implication is missed).
+
+  - Session paid total: runs 38-47 = $3.67 (plan $1.58, Sonnet mirror $0.88, mixed seats $1.21).
   - Still open: the vote rule question from run 38 (majority of the living to eliminate?), as a
     separate experiment since it changes the game.
   - Original proposal: Per-game costs measured so far:

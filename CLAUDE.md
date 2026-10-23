@@ -37,8 +37,8 @@ src/arena/             # package (src layout; `arena` script -> arena.cli:main)
       problems.py      # loads problems/, extracts code from model replies
       view.py          # its arena watch panel: the solo/team chain, attempt, last grade/review/decision
     mafia/
-      plugin.py        # Mafia: one mode (game), 60-call limit, settings.players, game-01..game-10
-      game.py          # pure rules: deal, speaking order, votes, choice parsing, win check, call bound
+      plugin.py        # Mafia: modes game + mixed, 60-call limit, settings.players, game-01..game-10
+      game.py          # pure rules: deal, seat groups (mixed), speaking order, votes, choice parsing, win check, call bound
       loop.py          # MafiaGame: nights and days via session.call, the mafia_events table
       roles.py         # player and narrator prompts, code-written fact lines
       view.py          # its arena watch panel: seats, actor, revealed votes, facts, --hide-roles
@@ -200,11 +200,15 @@ Only one Ollama model should be loaded at a time (16GB VRAM). Run tasks sequenti
 
 ## Mafia
 
-One task is one game: `game-01`..`game-10` (`--problem 03`, `--game 03` or `--problem game-03`). Code applies every rule in `game.py`; models only choose kills, checks, speeches and votes. Score is 1.0 if town won, else 0.0, so the scoreboard's "town won" and "town win" columns are the town wins and win rate. The results metrics hold the winner, nights/days, the mafia, who left when, detective checks and mafia found, town votes and town votes on mafia, and invalid replies by kind.
+One task is one game: `game-01`..`game-10` (`--problem 03`, `--game 03` or `--problem game-03`). Code applies every rule in `game.py`; models only choose kills, checks, speeches and votes. Score is 1.0 if town won, else 0.0, so the scoreboard's "town won" and "town win" columns are the town wins and win rate. The results metrics hold the winner, nights/days, the mafia, who left when, detective checks and mafia found, town votes and town votes on mafia, invalid replies by kind, and each player's model (`models`: name -> model and think).
+
+Two modes:
+- `game`: one model per role (`narrator`, `mafia`, `detective`, `villager`).
+- `mixed`: two seat models (`narrator`, `seats_a`, `seats_b`), 7 players only. `game.seat_groups` splits the seats from `random.Random(f"{game_id}:seats")` so each group holds exactly one mafia and two or three town players; a model's voice then doesn't point at a side (with one model per side, a capable town wins ~all games against another model's mafia and ~none against its own). Lineups come in pairs with `seats_a`/`seats_b` swapped, so every deal is played with each model in each seat. `arena report` gives mixed games per-player tables (each model's mafia voted out / killed / alive, its town players' votes on mafia, town wins by the detective's model) instead of per-side rates.
 
 Rules:
-- Lineups take `settings.players` 5-7 (default 7) and no `max_attempts` (a game has no attempts). 7 players: 2 mafia, 1 detective, 4 villagers; 5-6: 1 mafia, 1 detective, the rest villagers. Names come from a fixed list.
-- Seeds depend only on the game id: the deal uses `random.Random(f"{game_id}:deal")`, play (tie-breaks, replacing invalid targets) `random.Random(f"{game_id}:play")`. game-03 deals the same seats and roles in every lineup. Never seed from the run id or lineup.
+- Lineups take `settings.players` 5-7 (default 7; mixed: 7) and no `max_attempts` (a game has no attempts), and only their mode's roles. 7 players: 2 mafia, 1 detective, 4 villagers; 5-6: 1 mafia, 1 detective, the rest villagers. Names come from a fixed list.
+- Seeds depend only on the game id: the deal uses `random.Random(f"{game_id}:deal")`, play (tie-breaks, replacing invalid targets) `random.Random(f"{game_id}:play")`, mixed seat groups `random.Random(f"{game_id}:seats")`. game-03 deals the same seats and roles in every lineup. Never seed from the run id or lineup.
 - Night first. Each night the first living mafia proposes `TARGET: <name>`; the second sees the parsed proposal ("proposed killing X") plus the partner's reasoning, and makes the final choice. The detective names `CHECK: <name>` and privately learns mafia / not mafia. The check resolves before the kill.
 - Each day every living player speaks once, collapsed to one line and cut to 600 characters, so a speech can't add lines that look like code-written facts. Day N starts N-1 seats after seat 0, or at the next living seat. Then everyone votes `VOTE: <name>|none`.
 - **Votes are blind**: each voter sees the day's speeches but no one else's vote; all votes are revealed together in one fact line after everyone has voted. Plurality is eliminated; a tie is a seeded pick among the tied; no valid votes, no elimination.

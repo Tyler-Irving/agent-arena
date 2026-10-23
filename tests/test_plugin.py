@@ -138,6 +138,9 @@ def test_lineup_checked_against_its_plugin(tmp_path: Path) -> None:
     assert (ok["d"].plugin, ok["d"].mode) == ("duel", "duel")
     with pytest.raises(ValueError, match="duel has no mode 'solo'; choose from: duel"):
         load("d:\n  plugin: duel\n  mode: solo\n  roles: { solo: a/b }\n")
+    # a role the mode doesn't use would be silently ignored, so it's an error in every plugin
+    with pytest.raises(ValueError, match=r"solo lineup 'c' has roles it doesn't use: \['coder'\]"):
+        load("c:\n  mode: solo\n  roles: { solo: a/b, coder: a/c }\n")
     with pytest.raises(ValueError, match=r"duel lineup 'd' is missing roles: \['judge'\]"):
         load("d:\n  plugin: duel\n  mode: duel\n  max_attempts: 1\n  roles: { player: a/b }\n")
     with pytest.raises(ValueError, match="a duel has no retries"):

@@ -673,3 +673,15 @@ def test_hide_roles_needs_watch(monkeypatch, capsys) -> None:
     with pytest.raises(SystemExit) as stop:
         cli.main()
     assert stop.value.code == 2 and "add --watch" in capsys.readouterr().err
+
+
+def test_replay_of_a_mixed_seat_game(monkeypatch, tmp_path) -> None:
+    roles = {"narrator": "x/model-n", "seats_a": "x/model-a", "seats_b": "x/model-b"}
+    _, run_id = play_mafia(monkeypatch, tmp_path, roles=roles, mode="mixed")
+    text = replay_text(tmp_path / "arena.db", run_id)
+    flat = " ".join(text.split())
+
+    assert "TOWN WON on day 2" in text and "2 Blake mafia ✗ out day 1" in flat
+    # each player's calls show that player's seat model (game-01: Emery is in group b, Drew in a);
+    # the call log shows the latest calls only
+    assert "mafia:Emery model-b" in flat and "villager:Drew model-a" in flat

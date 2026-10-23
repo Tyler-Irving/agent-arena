@@ -20,7 +20,7 @@ from arena.core import orchestrator
 from arena.core import plugin as core_plugin
 from arena.core.events import Event, boot_id
 from arena.core.lineup import Lineup
-from arena.core.plugin import Outcome, Session
+from arena.core.plugin import Outcome, Session, Wording
 from arena.core.runlog import RunLog
 from arena.core.taskboard import SqliteTaskBoard
 from arena.watch import app, views
@@ -228,6 +228,10 @@ class Echo:
     name = "echo"
     modes: dict[str, set[str]] = {"echo": {"speaker"}}
     max_calls = 2
+    uses_attempts = False
+    wording = Wording(
+        task="echo", tasks="echoes", passed="passed", rate="pass", summary="{passed}/{scored} passed"
+    )
     schema = ""
 
     def load_tasks(self, selector: str | None) -> list:
@@ -621,6 +625,7 @@ def test_hidden_night_facts_are_shown_once_the_game_is_over(monkeypatch, tmp_pat
     assert "night 2: Emery chose Casey · Casey (villager) killed" in text
 
 
+@pytest.mark.skipif(getattr(os, "geteuid", lambda: -1)() == 0, reason="root can write to a 0o555 directory")
 def test_watch_will_not_follow_a_run_through_an_immutable_connection(monkeypatch, tmp_path, capsys) -> None:
     log, run_id = run_bounty(monkeypatch, tmp_path, "solo", [GOOD], [True])
     log.db.close()

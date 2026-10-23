@@ -11,13 +11,19 @@ runs of different task sets aren't compared.
 """
 
 import json
+import textwrap
+from collections.abc import Callable
+from typing import Any
 
 from pydantic import BaseModel
 
+from arena.core.plugin import Plugin
 from arena.core.runlog import RunLog
 
 # Results logged before plugins have no score; their passed flag is the score.
 SCORE = "COALESCE(results.score, results.passed)"
+# The attempt limit, which splits a lineup's rows, only for plugins that use attempts.
+LIMIT = "CASE WHEN :attempts THEN runs.max_attempts END"
 
 QUERY = f"""
 WITH call_totals AS (
@@ -29,7 +35,7 @@ WITH call_totals AS (
     GROUP BY run_id, problem_id
 )
 SELECT runs.lineup,
-       runs.max_attempts,
+       {LIMIT} AS max_attempts,
        runs.settings,
        COUNT(DISTINCT runs.id) AS runs,
        COUNT(*) AS trials,
@@ -45,16 +51,16 @@ FROM results
 JOIN runs ON runs.id = results.run_id
 LEFT JOIN call_totals
        ON call_totals.run_id = results.run_id AND call_totals.problem_id = results.problem_id
-WHERE runs.plugin = ? AND runs.id >= ?
-GROUP BY runs.lineup, runs.max_attempts, runs.settings
+WHERE runs.plugin = :plugin AND runs.id >= :since
+GROUP BY runs.lineup, {LIMIT}, runs.settings
 """
 
 RUN_RANGE = f"""
 WITH full_runs AS (
-    SELECT runs.lineup, runs.max_attempts, runs.settings, AVG({SCORE}) AS pass_rate
+    SELECT runs.lineup, {LIMIT} AS max_attempts, runs.settings, AVG({SCORE}) AS pass_rate
     FROM results
     JOIN runs ON runs.id = results.run_id
-    WHERE runs.plugin = ? AND runs.id >= ?
+    WHERE runs.plugin = :plugin AND runs.id >= :since
       AND runs.problem IS NULL AND runs.finished_at IS NOT NULL AND NOT COALESCE(runs.interrupted, 0)
     GROUP BY runs.id
 )
@@ -66,7 +72,8 @@ GROUP BY lineup, max_attempts, settings
 
 class ScoreRow(BaseModel):
     lineup: str
-    max_attempts: int | None  # None for runs logged before the limit was recorded
+    # None for runs logged before the limit was recorded, and for plugins that don't use attempts
+    max_attempts: int | None
     settings: str | None  # the lineup's plugin settings as JSON; None if it has none
     runs: int
     trials: int
@@ -97,13 +104,13 @@ class ScoreRow(BaseModel):
         return None if self.total_cost_usd is None else self.total_cost_usd / self.trials
 
 
-def scoreboard(log: RunLog, plugin: str, since: int | None = None) -> list[ScoreRow]:
+def scoreboard(log: RunLog, plugin: Plugin[Any], since: int | None = None) -> list[ScoreRow]:
     """One row per lineup of `plugin`, best pass rate first, then cheaper, then faster.
 
     `since` limits the board to that run id and later, e.g. to leave out runs
     made before a change to the problems or the loop.
     """
-    params = (plugin, since or 0)
+    params = {"plugin": plugin.name, "since": since or 0, "attempts": plugin.uses_attempts}
     ranges = {
         (r["lineup"], r["max_attempts"], r["settings"]): (r["low"], r["high"])
         for r in log.db.execute(RUN_RANGE, params)
@@ -136,59 +143,52 @@ def scoreboard(log: RunLog, plugin: str, since: int | None = None) -> list[Score
     )
 
 
-def format_scoreboard(rows: list[ScoreRow]) -> str:
-    headers = [
-        "lineup",
-        "limit",
-        "runs",
-        "passed",
-        "pass",
-        "per run",
-        "attempts",
-        "in tok",
-        "out tok",
-        "reasoning",
-        "cost",
-        "total",
-        "time",
+def format_scoreboard(rows: list[ScoreRow], plugin: Plugin[Any]) -> str:
+    """The table, in the plugin's words. Attempt columns only for plugins that use attempts."""
+    words = plugin.wording
+    # (header, cell, attempts only)
+    columns: list[tuple[str, Callable[[ScoreRow], str], bool]] = [
+        ("lineup", lambda r: r.label, False),
+        ("limit", lambda r: "?" if r.max_attempts is None else str(r.max_attempts), True),
+        ("runs", lambda r: str(r.runs), False),
+        (words.passed, lambda r: f"{_count(r.passed)}/{r.trials}", False),
+        (words.rate, lambda r: f"{r.pass_rate:.0%}", False),
+        ("per run", lambda r: _range(r.run_low, r.run_high), False),
+        ("attempts", lambda r: f"{r.avg_attempts:.2f}", True),
+        ("in tok", lambda r: f"{r.avg_input_tokens:,.0f}", False),
+        ("out tok", lambda r: f"{r.avg_output_tokens:,.0f}", False),
+        ("reasoning", lambda r: f"{r.avg_reasoning_tokens:,.0f}", False),
+        ("cost", lambda r: _cost(r.avg_cost_usd), False),
+        ("total", lambda r: _cost(r.total_cost_usd), False),
+        ("time", lambda r: f"{r.avg_wall_time_ms / 1000:.1f}s", False),
     ]
-    table = [
-        [
-            r.label,
-            "?" if r.max_attempts is None else str(r.max_attempts),
-            str(r.runs),
-            f"{_count(r.passed)}/{r.trials}",
-            f"{r.pass_rate:.0%}",
-            _range(r.run_low, r.run_high),
-            f"{r.avg_attempts:.2f}",
-            f"{r.avg_input_tokens:,.0f}",
-            f"{r.avg_output_tokens:,.0f}",
-            f"{r.avg_reasoning_tokens:,.0f}",
-            _cost(r.avg_cost_usd),
-            _cost(r.total_cost_usd),
-            f"{r.avg_wall_time_ms / 1000:.1f}s",
-        ]
-        for r in rows
+    # (note, attempts only), joined and wrapped
+    notes = [
+        (f"limit = max attempts per {words.task};", True),
+        (f"per run = lowest-highest {words.rate} rate of a single full run (- if none);", False),
+        ("attempts,", True),
+        (f"tokens, cost and time are per-{words.task} averages; total is all runs;", False),
+        ("? = unpriced model", False),
+        (", or limit not recorded", True),
     ]
-    widths = [max(len(row[i]) for row in [headers, *table]) for i in range(len(headers))]
+    shown = [c for c in columns if plugin.uses_attempts or not c[2]]
+    table = format_table(
+        [header for header, _, _ in shown], [[cell(r) for _, cell, _ in shown] for r in rows]
+    )
+    note = " ".join(n for n, only in notes if plugin.uses_attempts or not only).replace(" ,", ",")
+    return "\n".join([*table, "", textwrap.fill(note, width=90, break_on_hyphens=False)])
+
+
+def format_table(headers: list[str], rows: list[list[str]], left: int = 1) -> list[str]:
+    """Columns padded to fit, under a rule: the first `left` columns left-aligned, the rest right."""
+    widths = [max(len(row[i]) for row in [headers, *rows]) for i in range(len(headers))]
 
     def line(cells: list[str]) -> str:
-        # lineup name left-aligned, numbers right-aligned
         return "  ".join(
-            c.ljust(w) if i == 0 else c.rjust(w) for i, (c, w) in enumerate(zip(cells, widths, strict=True))
-        )
+            c.ljust(w) if i < left else c.rjust(w) for i, (c, w) in enumerate(zip(cells, widths, strict=True))
+        ).rstrip()
 
-    return "\n".join(
-        [
-            line(headers),
-            "  ".join("-" * w for w in widths),
-            *(line(row) for row in table),
-            "",
-            "limit = max attempts per problem; per run = lowest-highest pass rate of a single full run",
-            "(- if none); attempts, tokens, cost and time are per-problem averages; total is all runs;",
-            "? = unpriced model, or limit not recorded",
-        ]
-    )
+    return [line(headers), "  ".join("-" * w for w in widths), *(line(row) for row in rows)]
 
 
 def _range(low: float | None, high: float | None) -> str:

@@ -78,7 +78,7 @@ on `http://localhost:11434`.
 | --- | --- | --- |
 | `arena smoke` | `--model M` | One call to each model, to check keys and Ollama. Repeatable; defaults to Haiku and qwen2.5-coder:14b. |
 | `arena run` | `--lineup NAME` | Required. A lineup from `config/lineups.yaml`; it decides the plugin and the model for each role. |
-| | `--problem X` | One task instead of all: a problem number (`004`) or a Mafia game (`3`, `03` or `game-03`). |
+| | `--problem X` | One task instead of all: a problem number (`004`) or a Mafia game (`3`, `03` or `game-03`). `--game` is the same flag. |
 | | `--repeat N` | Run everything N times, to see run-to-run noise. |
 | | `--watch` | Show a live view while it runs. The usual lines still print above it. |
 | | `--hide-roles` | Mafia, with `--watch`: hide each role until that player is out or the game ends. |
@@ -87,7 +87,7 @@ on `http://localhost:11434`.
 | `arena replay` | `RUN_ID` | Required. Play a finished run back. |
 | | `--speed N` | How fast: `1` (default) is real time, `10` ten times as fast, `0.5` half speed, `0` only the final state. |
 | | `--hide-roles` | As above. |
-| `arena scoreboard` | `--plugin P` | Whose lineups to compare (default `code_bounty`). For `mafia`, "pass" is the town win rate. |
+| `arena scoreboard` | `--plugin P` | Whose lineups to compare (default `code_bounty`). For `mafia`, the columns are town wins and the town win rate. |
 | | `--since RUN_ID` | Only count that run and later ones, e.g. to compare before and after a change. |
 
 A run prints its id when it ends (`run 32: 1/1 passed, ...`), and the live view shows it in its
@@ -155,7 +155,7 @@ Every game is seeded by its id, so `game-03` deals the same seats and roles in e
 ```bash
 uv run arena run --lineup mafia-haiku --problem 03   # one game
 uv run arena run --lineup mafia-gptoss               # all ten games, locally
-uv run arena scoreboard --plugin mafia               # "pass" is the town win rate
+uv run arena scoreboard --plugin mafia               # town wins and town win rate per lineup
 ```
 
 Lineups such as `mafia-sonnet-vs-haiku` put a different model on each side. Every event goes to

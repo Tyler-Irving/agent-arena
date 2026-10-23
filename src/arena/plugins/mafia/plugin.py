@@ -4,6 +4,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from arena.core.lineup import Lineup
 from arena.core.plugin import Outcome, Session, Wording
+from arena.core.runlog import RunLog
+from arena.plugins.mafia import report
 from arena.plugins.mafia.game import MAX_PLAYERS, MIN_PLAYERS
 from arena.plugins.mafia.loop import EVENTS_SCHEMA, MafiaGame
 
@@ -56,6 +58,10 @@ class Mafia:
 
     async def run_task(self, task: Game, lineup: Lineup, session: Session) -> Outcome:
         return await MafiaGame(task.id, lineup, session, settings(lineup).players).play()
+
+    def report(self, log: RunLog, since: int | None) -> str:
+        """Win rates by model and side, deal and ending, plus town play and cost (`arena report`)."""
+        return report.report(log, self.name, since)
 
 
 def settings(lineup: Lineup) -> MafiaSettings:

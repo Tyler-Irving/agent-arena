@@ -35,6 +35,12 @@ TOWN_WINS = {
     "votes": {1: "Blake", 2: "Emery"},
     "checks": {1: "Blake", 2: "Emery"},
 }
+# nobody is voted out, and the mafia kill a villager each night until they reach parity on night 3
+MAFIA_WINS = {
+    "kills": {1: "Casey", 2: "Gray", 3: "Drew"},
+    "votes": {},
+    "checks": {1: "Drew", 2: "Finley", 3: "Finley"},
+}
 
 
 def reply(text: str, cost: float | None = 0.01) -> ModelResponse:
@@ -105,9 +111,15 @@ def run_bounty(
 
 
 def mafia_complete(
-    script: dict | None, seen: list[tuple[str, str]] | None = None, costs: dict[str, float] | None = None
+    script: dict | None,
+    seen: list[tuple[str, str]] | None = None,
+    costs: dict[str, float] | None = None,
+    speeches: dict[str, str] | None = None,
 ):
-    """A fake complete that plays `script` (None: every reply is unusable). `costs`: price by role."""
+    """A fake complete that plays `script` (None: every reply is unusable).
+
+    `costs`: price by role; `speeches`: what each role says every day, instead of a stock line.
+    """
 
     async def fake_complete(model, system, messages, *, role, **kwargs):
         content = messages[0]["content"]
@@ -131,7 +143,7 @@ def mafia_complete(
         if "VOTE:" in last:
             target = script["votes"].get(n) if kind != "mafia" else None
             return say(f"VOTE: {target or 'none'}")
-        return say(f"{name} speaks on day {n}.")
+        return say((speeches or {}).get(kind, f"{name} speaks on day {n}."))
 
     return fake_complete
 
@@ -143,10 +155,19 @@ def play_mafia(
     game: str = "01",
     roles: dict[str, str] | None = None,
     costs: dict[str, float] | None = None,
+    name: str = "mafia-fake",
+    speeches: dict[str, str] | None = None,
+    settings: dict | None = None,
 ) -> tuple[RunLog, int]:
-    monkeypatch.setattr(core_plugin, "complete", mafia_complete(script, costs=costs))
+    monkeypatch.setattr(core_plugin, "complete", mafia_complete(script, costs=costs, speeches=speeches))
     lineup = Lineup.model_validate(
-        {"name": "mafia-fake", "plugin": "mafia", "mode": "game", "roles": roles or MAFIA_ROLES}
+        {
+            "name": name,
+            "plugin": "mafia",
+            "mode": "game",
+            "roles": roles or MAFIA_ROLES,
+            "settings": settings or {},
+        }
     )
     log = RunLog(tmp_path / "arena.db")
     board = SqliteTaskBoard(tmp_path / "arena.db")

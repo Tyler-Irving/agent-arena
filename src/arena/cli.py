@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 
 from arena.core.lineup import get_lineup, load_lineups
 from arena.core.orchestrator import format_cost, run_lineup
-from arena.core.plugin import Outcome, PluginError, Wording
+from arena.core.plugin import Outcome, PluginError, Reports, Wording
 from arena.core.runlog import DEFAULT_DB, get_runlog
 from arena.core.scoreboard import format_scoreboard, scoreboard
 from arena.core.taskboard import SqliteTaskBoard
@@ -193,6 +193,20 @@ def first_lineup(plugin_name: str) -> str | None:
     return next((name for name, lineup in lineups.items() if lineup.plugin == plugin_name), None)
 
 
+def show_report(plugin_name: str, since: int | None) -> int:
+    try:
+        plugin = get_plugin(plugin_name)
+    except KeyError as e:
+        print(e.args[0], file=sys.stderr)
+        return 2
+    if not isinstance(plugin, Reports):
+        have = [name for name, p in PLUGINS.items() if isinstance(p, Reports)]
+        print(f"{plugin_name} has no report; plugins with one: {', '.join(have)}", file=sys.stderr)
+        return 2
+    print(plugin.report(get_runlog(), since))
+    return 0
+
+
 def watch(run_id: int | None, hide_roles: bool) -> int:
     from arena.watch.app import attach
     from arena.watch.views import ViewOptions
@@ -260,6 +274,14 @@ def main() -> None:
         "--plugin", default=DEFAULT_PLUGIN, help=f"whose runs to compare (default: {DEFAULT_PLUGIN})"
     )
 
+    p_report = sub.add_parser("report", help="a plugin's own report, e.g. Mafia win rates by model and side")
+    p_report.add_argument(
+        "--since", type=positive_int, metavar="RUN_ID", help="only count this run and later ones"
+    )
+    p_report.add_argument(
+        "--plugin", default=DEFAULT_PLUGIN, help=f"whose runs to report on (default: {DEFAULT_PLUGIN})"
+    )
+
     args = parser.parse_args()
     if args.command == "run" and args.hide_roles and not args.watch:
         p_run.error("--hide-roles only changes the --watch view; add --watch")
@@ -273,6 +295,8 @@ def main() -> None:
         sys.exit(replay(args.run_id, args.speed, args.hide_roles))
     elif args.command == "scoreboard":
         sys.exit(show_scoreboard(args.plugin, args.since))
+    elif args.command == "report":
+        sys.exit(show_report(args.plugin, args.since))
 
 
 def non_negative_float(value: str) -> float:

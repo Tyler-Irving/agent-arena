@@ -390,9 +390,9 @@ Same deal every time: Blake + Emery mafia, Avery detective (game-01).
     2/5 or 3/5 town wins.
   - Report fix found in the run 42 data: the claim regex missed "I've checked X"; now also matches
     "I've"/"I have checked" (gpt-oss town claims 2/10 -> 4/10).
-  - `arena report --since 38` (after the fix):
+  - `arena report --since 38` (after the fix, including run 43):
 
-    50 game(s) from 5 run(s), runs 38-42
+    60 game(s) from 6 run(s), runs 38-43
 
     Town win rate by lineup
     lineup                 mafia              town               games   town won
@@ -401,37 +401,38 @@ Same deal every time: Blake + Emery mafia, Avery detective (game-01).
     mafia-haiku            claude-haiku-5-5   claude-haiku-5-5      10  1/10  10%
     mafia-haiku-vs-gptoss  claude-haiku-5-5   gpt-oss:20b           10  0/10   0%
     mafia-haiku-vs-sonnet  claude-haiku-5-5   claude-sonnet-5-5     10  9/10  90%
+    mafia-sonnet           claude-sonnet-5-5  claude-sonnet-5-5     10  1/10  10%
     mafia-sonnet-vs-haiku  claude-sonnet-5-5  claude-haiku-5-5      10  7/10  70%
 
     Win rate by model and side, across lineups
     model              won as mafia  vs other models  won as town  vs other models
     -----------------  ------------  ---------------  -----------  ---------------
     claude-haiku-5-5     20/30  67%       11/20  55%   17/30  57%       16/20  80%
-    claude-sonnet-5-5     3/10  30%        3/10  30%    9/10  90%        9/10  90%
+    claude-sonnet-5-5    12/20  60%        3/10  30%   10/20  50%        9/10  90%
     gpt-oss:20b           1/10  10%        1/10  10%    0/10   0%        0/10   0%
 
     By deal (each game id deals the same seats in every lineup)
     game     mafia          games  town won
     -------  -------------  -----  --------
-    game-01  Blake, Emery       5  3/5  60%
-    game-02  Finley, Emery      5  2/5  40%
-    game-03  Emery, Casey       5  2/5  40%
-    game-04  Finley, Emery      5  3/5  60%
-    game-05  Blake, Emery       5  3/5  60%
-    game-06  Finley, Emery      5  3/5  60%
-    game-07  Avery, Blake       5  3/5  60%
-    game-08  Avery, Finley      5  2/5  40%
-    game-09  Emery, Casey       5  3/5  60%
-    game-10  Avery, Blake       5  2/5  40%
+    game-01  Blake, Emery       6  3/6  50%
+    game-02  Finley, Emery      6  2/6  33%
+    game-03  Emery, Casey       6  2/6  33%
+    game-04  Finley, Emery      6  3/6  50%
+    game-05  Blake, Emery       6  3/6  50%
+    game-06  Finley, Emery      6  3/6  50%
+    game-07  Avery, Blake       6  3/6  50%
+    game-08  Avery, Finley      6  3/6  50%
+    game-09  Emery, Casey       6  3/6  50%
+    game-10  Avery, Blake       6  2/6  33%
 
     How games end
     ended on        games  town won  mafia won
     ---------  ----------  --------  ---------
-    night 2            20         0         20
-    day 2              26        26          0
-    night 3             4         0          4
-    any night  24/50  48%         0         24
-    any day    26/50  52%        26          0
+    night 2            28         0         28
+    day 2              27        27          0
+    night 3             5         0          5
+    any night  33/60  55%         0         33
+    any day    27/60  45%        27          0
 
     Town play by lineup
     lineup                 games  town votes on mafia  checks found mafia  det. claimed  det. survived  det. voted out
@@ -440,6 +441,7 @@ Same deal every time: Blake + Emery mafia, Avery detective (game-01).
     mafia-haiku               10           20/37  54%           6/15  40%     7/10  70%      0/10   0%       3/10  30%
     mafia-haiku-vs-gptoss     10           11/36  31%           3/12  25%     4/10  40%      0/10   0%       3/10  30%
     mafia-haiku-vs-sonnet     10           58/67  87%           9/18  50%     6/10  60%      4/10  40%       0/10   0%
+    mafia-sonnet              10           18/46  39%           4/16  25%     1/10  10%      3/10  30%       2/10  20%
     mafia-sonnet-vs-haiku     10           51/54  94%           7/17  41%     9/10  90%      0/10   0%       2/10  20%
 
     Invalid replies, calls and cost per game, by lineup
@@ -449,6 +451,7 @@ Same deal every time: Blake + Emery mafia, Avery detective (game-01).
     mafia-haiku               10                  0 (0/0/0)   23.3  $0.0066   90s
     mafia-haiku-vs-gptoss     10                  1 (0/1/0)   22.3  $0.0027  110s
     mafia-haiku-vs-sonnet     10                  0 (0/0/0)   28.0  $0.0897  106s
+    mafia-sonnet              10                  0 (0/0/0)   22.4  $0.0883   70s
     mafia-sonnet-vs-haiku     10                  0 (0/0/0)   26.3  $0.0535  117s
 
     Rates come with their counts (won/games); one game per cell is noise, not evidence.
@@ -460,6 +463,32 @@ Same deal every time: Blake + Emery mafia, Avery detective (game-01).
   - User approved the Sonnet mirror (2026-10-23): lineup mafia-sonnet added (Sonnet players, Haiku
     narrator). Estimate ~$1.25 for 10 games (Sonnet $0.0056/call in runs 39-40 x ~22 player calls per
     game; $0.95-1.60 by game length). The user starts it: `! uv run arena run --lineup mafia-sonnet`.
+  - run 43 mafia-sonnet (all Sonnet players, Haiku narrator): TOWN WON 1/10 (game-08), $0.8829 (Sonnet
+    191 calls $0.8804), 224 calls, 704 s. 8 games ended night 2, 1 night 3. 0 invalid, 0 null votes,
+    clean audit. Mafia and town speeches the same length (429 v 438 chars) and register: in game-07 the
+    two mafia echo the villagers' "nothing to read yet, let's hear everyone", and the town (3 town
+    votes) eliminated villager Emery for a tentative read. The mafia pair voted together on day 1 in
+    6/10 (4/10 as mafia against Haiku town in run 39).
+  - REVISED CONCLUSION (supersedes "RESULT of the plan" and the run-42 retraction above). Town wins:
+                    mafia Haiku   mafia Sonnet   mafia gpt-oss
+      town Haiku       1/10          7/10           9/10
+      town Sonnet      9/10          1/10            -
+      town gpt-oss     0/10           -           2/10 (run 37)
+    For the two capable towns (Haiku, Sonnet) the result depends on whether the mafia is the SAME
+    model, not on which model it is: same-model mafia 2/20 town wins, other-model mafia 25/30 (Fisher
+    p ~ 3e-7; Sonnet town alone 1/10 v 9/10, p 0.001). gpt-oss town loses either way (2/10 v 0/10,
+    p 0.47), which is why run 42 looked like a refutation: a weak town catches nobody, odd voice or not.
+    So the odd-voice reading holds for towns that can read speech at all. It is a hypothesis about the
+    mechanism (town speeches rarely name style), but the effect itself is large and consistent.
+    Consequence: these lineups can't answer "which model is the better mafia/town" by themselves,
+    because a cross-model game mostly measures how different the two models sound. Within mirror games
+    the side balance is ~mafia-favored for every model (town 1/10, 1/10, 2/10).
+    Design ideas to separate skill from voice (not started): (a) mixed seats: each player's model drawn
+    per seat independent of role (needs per-player models, gap #4), so a voice doesn't reveal a side;
+    (b) a style-neutral relay that rewrites each speech before others see it (adds a model in the
+    loop, so its own bias needs checking); (c) majority-to-eliminate, which may matter more in mirror
+    games where day 1 is a coin flip.
+  - Total Mafia spend this session: runs 38-43 = $2.47 (plan $1.58 + Sonnet mirror $0.88).
   - Still open: the vote rule question from run 38 (majority of the living to eliminate?), as a
     separate experiment since it changes the game.
   - Original proposal: Per-game costs measured so far:

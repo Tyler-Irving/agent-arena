@@ -5,8 +5,17 @@
   (step 7 = PR #13 plugin interface, tag step-7-plugins; step 8 = PR #14 Mafia plugin, tag step-8-mafia).
 - Session 2026-10-23, three parts (user's plan): 1. fix/mafia-wording (gaps #2 + #6, root skipif),
   2. mafia-gptoss on game-01..10 (free), 3. feat/mafia-report (`arena report --plugin mafia`), then
-  propose a paid matchup plan and stop for approval. All done: PR #18 (wording) and PR #19 (report,
-  stacked on #18) open; paid plan A + C run as runs 38-42 ($1.58). See "Session 2026-10-23" below. Paid runs (anthropic/*) need the user's OK; auto mode
+  propose a paid matchup plan and stop for approval. All done, plus two follow-ups the user asked for:
+  an all-Sonnet game (run 43) and mixed-seat lineups (PR #20, runs 44-47). Paid total $3.67.
+- Three stacked PRs open, review and merge in order: #18 fix/mafia-wording -> main, #19
+  feat/mafia-report -> #18, #20 feat/mafia-mixed-seats -> #19. All pushed; 273 tests on #20's branch.
+  Tag the merges if continuing the step-N convention (e.g. step-10-mafia-report).
+- Main finding: with one model per side, a capable town catches another model's mafia (25/30) but not
+  its own (2/20): a model's voice gives the side away. Mixed seats hide it (town 17/40) and then no
+  mafia-skill gap shows; only "gpt-oss votes less accurately than Haiku" survives. Details under
+  "Session 2026-10-23".
+- Next ideas (not started): more mixed games for power; majority-to-eliminate vote rule (day 1 decides
+  nearly every game). Paid runs (anthropic/*) need the user's OK; auto mode
   blocks them, so the user may run them with `! uv run arena run ...`.
 - GitHub: https://github.com/Tyler-Irving/agent-arena (public). main has steps 1-9, merged
   through one PR per step; each step's tag points at its PR's merge commit (from step 6 on).

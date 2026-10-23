@@ -42,6 +42,7 @@ src/arena/             # package (src layout; `arena` script -> arena.cli:main)
       loop.py          # MafiaGame: nights and days via session.call, the mafia_events table
       roles.py         # player and narrator prompts, code-written fact lines
       view.py          # its arena watch panel: seats, actor, revealed votes, facts, --hide-roles
+      report.py        # arena report: wins by model and side, deal and ending; town play; cost
   watch/               # the terminal viewer (Rich); core never imports it
     state.py           # RunState: folds a run's events into what the screen shows
     views.py           # TaskView protocol, GenericView, view_for(plugin) -> plugins/<name>/view.py
@@ -151,6 +152,7 @@ Data must be JSON-friendly and must never hold anything some agent isn't meant t
    - Only `arena.watch` imports it, so the plugin itself never loads Rich.
    - Without one, the generic panel lists the plugin's events.
    - Test it the way `tests/test_watch.py` does: replay a scripted run with `--speed 0` into `Console(record=True)`.
+7. Optional, for `arena report --plugin <name>`: a `report(self, log, since) -> str` method (`core.plugin.Reports`, checked with isinstance). Use it for what the scoreboard's one row per lineup can't show. Derive it from what runs already store (results, metrics, calls, events, the plugin's own tables) rather than storing more.
 
 ## Lineups
 
@@ -257,7 +259,8 @@ uv run arena scoreboard                    # pass rate, avg attempts, tokens, co
 uv run arena scoreboard --since 17         # only run 17 and later
 uv run arena scoreboard --plugin X         # another plugin's lineups (default code_bounty)
 uv run arena run --lineup mafia-haiku --problem 03   # one Mafia game
-uv run arena scoreboard --plugin mafia     # pass = town win rate
+uv run arena scoreboard --plugin mafia     # town won / town win rate per lineup
+uv run arena report --plugin mafia [--since RUN_ID]   # win rate per model per side, per deal, endings, town play, cost
 uv run arena run --lineup X --watch        # live view; the usual lines still print above it
 uv run arena watch [RUN_ID]                # attach read-only from another terminal (default: the run in progress, else the next)
 uv run arena replay RUN_ID [--speed N]     # gaps divided by N; 0 = final frame only; exits 2 for runs with no events

@@ -9,7 +9,7 @@ task, which it makes through the Session it is handed.
 
 import asyncio
 import time
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -65,6 +65,15 @@ class Plugin[T: TaskSpec](Protocol):
         ...
 
     async def run_task(self, task: T, lineup: Lineup, session: "Session") -> "Outcome": ...
+
+
+@runtime_checkable
+class Reports(Protocol):
+    """A plugin with a report of its own (`arena report`), beyond the scoreboard's per-lineup rows."""
+
+    def report(self, log: RunLog, since: int | None) -> str:
+        """The report over this plugin's runs, from run `since` on (all runs if None)."""
+        ...
 
 
 class PluginError(Exception):

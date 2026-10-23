@@ -89,6 +89,8 @@ on `http://localhost:11434`.
 | | `--hide-roles` | As above. |
 | `arena scoreboard` | `--plugin P` | Whose lineups to compare (default `code_bounty`). For `mafia`, the columns are town wins and the town win rate. |
 | | `--since RUN_ID` | Only count that run and later ones, e.g. to compare before and after a change. |
+| `arena report` | `--plugin P` | A plugin's own report, if it has one (`mafia`: win rates by model and side). |
+| | `--since RUN_ID` | As above. |
 
 A run prints its id when it ends (`run 32: 1/1 passed, ...`), and the live view shows it in its
 header. Ctrl-C stops a watcher or a replay without touching the run being watched.
@@ -156,7 +158,14 @@ Every game is seeded by its id, so `game-03` deals the same seats and roles in e
 uv run arena run --lineup mafia-haiku --problem 03   # one game
 uv run arena run --lineup mafia-gptoss               # all ten games, locally
 uv run arena scoreboard --plugin mafia               # town wins and town win rate per lineup
+uv run arena report --plugin mafia                   # which model is better at which side
 ```
+
+The scoreboard gives a lineup one row, so a lineup with Sonnet on mafia and Haiku on town is one
+blended number. `arena report --plugin mafia` splits the games: town win rate per lineup, each
+model's win rate as mafia and as town (also leaving out games with one model on both sides),
+town wins per deal, how games end (which night or day), town votes on mafia, detective checks,
+claims and survival, invalid replies, calls and cost per game. Every rate comes with its count.
 
 Lineups such as `mafia-sonnet-vs-haiku` put a different model on each side. Every event goes to
 the `mafia_events` table, and every prompt to `calls`, so a game can be read back per player.
@@ -234,7 +243,7 @@ all capabilities dropped and a non-root user. Containers are killed after 30 sec
 
 ```
 src/arena/
-  cli.py                     arena smoke | run [--watch] | watch | replay | scoreboard
+  cli.py                     arena smoke | run [--watch] | watch | replay | scoreboard | report
   models/router.py           one async complete() over Anthropic and Ollama
   models/pricing.py          per-model token prices (local models are free)
   core/plugin.py             the Plugin protocol, and the Session/Outcome a plugin works with
@@ -246,7 +255,7 @@ src/arena/
   core/lineup.py             lineup config loading, checked against each lineup's plugin
   plugins/__init__.py        the plugin registry: a plain dict of name -> plugin
   plugins/code_bounty/       solo/team loops (loop.py), prompts (roles.py), grader, problems, view.py
-  plugins/mafia/             game rules (game.py), game loop (loop.py), prompts (roles.py), view.py
+  plugins/mafia/             game rules (game.py), game loop (loop.py), prompts (roles.py), view.py, report.py
   watch/                     the terminal viewer (Rich): run --watch, watch, replay
 docker/arena-grader/         grading sandbox image
 config/lineups.yaml          lineups

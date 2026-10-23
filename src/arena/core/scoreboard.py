@@ -90,10 +90,7 @@ class ScoreRow(BaseModel):
 
     @property
     def label(self) -> str:
-        """The lineup name, plus its settings if it has any: "some-lineup [players=5]"."""
-        if not self.settings:
-            return self.lineup
-        return f"{self.lineup} [{', '.join(f'{k}={v}' for k, v in json.loads(self.settings).items())}]"
+        return settings_label(self.lineup, self.settings)
 
     @property
     def pass_rate(self) -> float:
@@ -158,8 +155,8 @@ def format_scoreboard(rows: list[ScoreRow], plugin: Plugin[Any]) -> str:
         ("in tok", lambda r: f"{r.avg_input_tokens:,.0f}", False),
         ("out tok", lambda r: f"{r.avg_output_tokens:,.0f}", False),
         ("reasoning", lambda r: f"{r.avg_reasoning_tokens:,.0f}", False),
-        ("cost", lambda r: _cost(r.avg_cost_usd), False),
-        ("total", lambda r: _cost(r.total_cost_usd), False),
+        ("cost", lambda r: cost_cell(r.avg_cost_usd), False),
+        ("total", lambda r: cost_cell(r.total_cost_usd), False),
         ("time", lambda r: f"{r.avg_wall_time_ms / 1000:.1f}s", False),
     ]
     # (note, attempts only), joined and wrapped
@@ -177,6 +174,13 @@ def format_scoreboard(rows: list[ScoreRow], plugin: Plugin[Any]) -> str:
     )
     note = " ".join(n for n, only in notes if plugin.uses_attempts or not only).replace(" ,", ",")
     return "\n".join([*table, "", textwrap.fill(note, width=90, break_on_hyphens=False)])
+
+
+def settings_label(name: str, settings: str | None) -> str:
+    """`name`, plus the plugin settings (runs.settings JSON) if there are any: "some-lineup [players=5]"."""
+    if not settings:
+        return name
+    return f"{name} [{', '.join(f'{k}={v}' for k, v in json.loads(settings).items())}]"
 
 
 def format_table(headers: list[str], rows: list[list[str]], left: int = 1) -> list[str]:
@@ -201,5 +205,5 @@ def _count(total: float) -> str:
     return str(int(total)) if total.is_integer() else f"{total:.1f}"
 
 
-def _cost(cost: float | None) -> str:
+def cost_cell(cost: float | None) -> str:
     return "?" if cost is None else f"${cost:.4f}"

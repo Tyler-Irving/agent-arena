@@ -70,6 +70,32 @@ def play_rng(game_id: str) -> random.Random:
     return random.Random(f"{game_id}:play")
 
 
+Group = Literal["a", "b"]
+
+
+def seat_groups(state: GameState) -> dict[str, Group]:
+    """Mixed seats: which of a lineup's two seat models each player gets, from the game id alone.
+
+    Each group holds exactly one mafia, and the five town players split 3/2
+    (which group gets three is seeded too), so neither model's voice points at
+    a side: in both groups a quarter to a third of the players are mafia, near
+    the table's 2 in 7. That needs two mafia, so 7 players. A second lineup
+    with the two models swapped plays every deal with each model in each seat.
+    """
+    rng = random.Random(f"{state.game_id}:seats")
+    mafia = [p.name for p in state.players if p.role == "mafia"]
+    town = [p.name for p in state.players if p.role != "mafia"]
+    if len(mafia) != 2:
+        raise ValueError(f"mixed seats need two mafia (7 players), got {len(state.players)} players")
+    rng.shuffle(mafia)
+    rng.shuffle(town)
+    big: Group = rng.choice(["a", "b"])  # gets three of the five town players
+    small: Group = "b" if big == "a" else "a"
+    groups: dict[str, Group] = {mafia[0]: "a", mafia[1]: "b"}
+    groups |= {name: big if i < 3 else small for i, name in enumerate(town)}
+    return groups
+
+
 def speaking_order(state: GameState, day: int) -> list[Player]:
     """Living players in seat order. Day N starts N-1 seats after seat 0, or at the next living seat."""
     n = len(state.players)

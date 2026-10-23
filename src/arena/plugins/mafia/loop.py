@@ -22,6 +22,7 @@ from arena.plugins.mafia.game import (
     parse_choice,
     play_rng,
     resolve_votes,
+    seat_groups,
     speaking_order,
     vote_targets,
     winner,
@@ -49,6 +50,12 @@ class MafiaGame:
         self.lineup = lineup
         self.session = session
         self.state = deal(game_id, players)
+        # Each player's model: by role, or in a mixed lineup by seat group.
+        if lineup.mode == "mixed":
+            groups = seat_groups(self.state)
+            self.models = {p.name: lineup.roles[f"seats_{groups[p.name]}"] for p in self.state.players}
+        else:
+            self.models = {p.name: lineup.roles[p.role] for p in self.state.players}
         self.rng = play_rng(game_id)
         self.public: list[str] = []  # fact lines and speeches: all any player sees of the game
         self.checks: list[str] = []  # the detective's results, seen only by the detective
@@ -179,7 +186,7 @@ class MafiaGame:
 
     async def ask(self, player: Player, task: str) -> str:
         content = roles.player_prompt(self.state, player, self.checks, self.public, task)
-        role = self.lineup.roles[player.role]
+        role = self.models[player.name]
         reply = await self.session.call(
             f"{player.role}:{player.name}", role, roles.PLAYER_SYSTEM, [{"role": "user", "content": content}]
         )
@@ -220,6 +227,8 @@ class MafiaGame:
             "town_votes": self.town_votes,
             "town_votes_on_mafia": self.town_votes_on_mafia,
             "invalid": self.invalid,
+            # each player's model, also for a player killed before their first call
+            "models": {name: {"model": cfg.model, "think": cfg.think} for name, cfg in self.models.items()},
         }
         if error is not None:
             return self.session.outcome(score=0.0, verdict="ERROR, not scored", error=error, metrics=metrics)

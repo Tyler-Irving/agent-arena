@@ -129,3 +129,38 @@ mafia-haiku-vs-gptoss:
     mafia: anthropic/claude-haiku-5-5
     detective: ollama/gpt-oss:20b
     villager: ollama/gpt-oss:20b
+
+# Mixed seats (mode mixed, 7 players): each model plays one mafia and two or three town seats
+# (game.seat_groups), so a model's voice doesn't give away a side. Each pair swaps seats_a and
+# seats_b, so every deal is played with each model in each seat; run both halves of a pair.
+mafia-mixed-haiku-sonnet:
+  plugin: mafia
+  mode: mixed
+  roles:
+    narrator: anthropic/claude-haiku-5-5
+    seats_a: anthropic/claude-haiku-5-5
+    seats_b: anthropic/claude-sonnet-5-5
+
+mafia-mixed-sonnet-haiku:
+  plugin: mafia
+  mode: mixed
+  roles:
+    narrator: anthropic/claude-haiku-5-5
+    seats_a: anthropic/claude-sonnet-5-5
+    seats_b: anthropic/claude-haiku-5-5
+
+mafia-mixed-gptoss-haiku:
+  plugin: mafia
+  mode: mixed
+  roles:
+    narrator: anthropic/claude-haiku-5-5
+    seats_a: ollama/gpt-oss:20b
+    seats_b: anthropic/claude-haiku-5-5
+
+mafia-mixed-haiku-gptoss:
+  plugin: mafia
+  mode: mixed
+  roles:
+    narrator: anthropic/claude-haiku-5-5
+    seats_a: anthropic/claude-haiku-5-5
+    seats_b: ollama/gpt-oss:20b

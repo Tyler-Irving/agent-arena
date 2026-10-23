@@ -35,6 +35,8 @@ TOWN_WINS = {
     "votes": {1: "Blake", 2: "Emery"},
     "checks": {1: "Blake", 2: "Emery"},
 }
+MIXED_ROLES = {"narrator": "fake/narrator", "seats_a": "fake/a", "seats_b": "fake/b"}
+SWAPPED_ROLES = {"narrator": "fake/narrator", "seats_a": "fake/b", "seats_b": "fake/a"}
 # nobody is voted out, and the mafia kill a villager each night until they reach parity on night 3
 MAFIA_WINS = {
     "kills": {1: "Casey", 2: "Gray", 3: "Drew"},
@@ -158,13 +160,14 @@ def play_mafia(
     name: str = "mafia-fake",
     speeches: dict[str, str] | None = None,
     settings: dict | None = None,
+    mode: str = "game",
 ) -> tuple[RunLog, int]:
     monkeypatch.setattr(core_plugin, "complete", mafia_complete(script, costs=costs, speeches=speeches))
     lineup = Lineup.model_validate(
         {
             "name": name,
             "plugin": "mafia",
-            "mode": "game",
+            "mode": mode,
             "roles": roles or MAFIA_ROLES,
             "settings": settings or {},
         }

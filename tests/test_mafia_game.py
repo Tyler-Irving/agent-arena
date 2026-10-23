@@ -17,6 +17,7 @@ from arena.plugins.mafia.game import (
     play_rng,
     resolve_votes,
     role_counts,
+    seat_groups,
     speaking_order,
     vote_targets,
     winner,
@@ -178,3 +179,25 @@ def test_none_is_invalid_where_a_choice_is_required() -> None:
 def test_worst_case_game_fits_the_call_limit(players: int, worst: int) -> None:
     # e.g. 6 players with no eliminations: nights of 3 calls around days of 11, 9 and 7
     assert worst_case_calls(players) == worst <= MAX_CALLS
+
+
+def test_seat_groups_split_each_side_across_both_models() -> None:
+    for i in range(1, 11):
+        state = deal(f"game-{i:02}", 7)
+        groups = seat_groups(state)
+        assert set(groups) == {p.name for p in state.players}
+        mafia = sorted(groups[p.name] for p in state.players if p.role == "mafia")
+        town = sorted(groups[p.name] for p in state.players if p.role != "mafia")
+        assert mafia == ["a", "b"]  # one mafia per model, so neither voice points at a side
+        assert sorted([town.count("a"), town.count("b")]) == [2, 3]
+        assert seat_groups(deal(f"game-{i:02}", 7)) == groups  # from the game id alone
+    detective_groups = {
+        seat_groups(s := deal(f"game-{i:02}", 7))[next(p.name for p in s.players if p.role == "detective")]
+        for i in range(1, 11)
+    }
+    assert detective_groups == {"a", "b"}  # the detective isn't always on one model
+
+
+def test_seat_groups_need_two_mafia() -> None:
+    with pytest.raises(ValueError, match="two mafia"):
+        seat_groups(deal("game-01", 6))

@@ -489,6 +489,20 @@ Same deal every time: Blake + Emery mafia, Avery detective (game-01).
     loop, so its own bias needs checking); (c) majority-to-eliminate, which may matter more in mirror
     games where day 1 is a coin flip.
   - Total Mafia spend this session: runs 38-43 = $2.47 (plan $1.58 + Sonnet mirror $0.88).
+  - User chose mixed seats (2026-10-23), branch feat/mafia-mixed-seats (stacked on feat/mafia-report):
+    mode `mixed` (roles narrator, seats_a, seats_b; 7 players). game.seat_groups, seeded
+    "{game_id}:seats": each group gets exactly one mafia and 3 or 2 of the 5 town players (the
+    detective's group varies: a in 4 deals, b in 6), so neither voice points at a side. Lineups in
+    swapped pairs (mafia-mixed-haiku-sonnet / -sonnet-haiku, mafia-mixed-gptoss-haiku / -haiku-gptoss)
+    play every deal with each model in each seat. Loop picks each player's RoleConfig by seat group;
+    metrics["models"] records each player's model (also players killed before their first call).
+    validate_lineup: mixed needs 7 players and two different seat configs (think on v off is allowed);
+    any mode rejects roles it doesn't use. Report: mixed games (2+ models on the mafia side) leave the
+    per-side table and get "each model's players, by role" (voted out = caught, killed, alive, their
+    votes on mafia) and "town win rate by the detective's model". No event change (no EVENTS_VERSION
+    bump); the viewer already showed per-call models.
+    Estimates per pair (20 games): Haiku/Sonnet ~$1.35 (half the seats Sonnet, ~$0.067/game);
+    gpt-oss/Haiku ~$0.10 (Haiku seats only). Not run yet; the user starts paid runs.
   - Still open: the vote rule question from run 38 (majority of the living to eliminate?), as a
     separate experiment since it changes the game.
   - Original proposal: Per-game costs measured so far:

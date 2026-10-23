@@ -332,7 +332,10 @@ Same deal every time: Blake + Emery mafia, Avery detective (game-01).
   claimed = the detective said "I'm the detective" or "I checked <name>" in a speech (a
   text match: a claim made only by implication is missed).
 
-- Paid matchup plan (proposed, NOT run; needs the user's approval). Per-game costs measured so far:
+- Paid matchup plan: user approved A + C on 2026-10-23 (~$1.90). Lineups mafia-gptoss-vs-haiku and
+  mafia-haiku-vs-gptoss added to config/lineups.yaml (Haiku narrator, like the other cross lineups).
+  The user starts the runs (auto mode blocks paid runs); next run id is 38, so compare with
+  `arena report --since 38` (and the full report for everything). Original proposal: Per-game costs measured so far:
   mafia-haiku $0.0100 (29 calls), mafia-sonnet-vs-haiku $0.0394 (20 calls, a short game), mafia-haiku-
   vs-sonnet $0.1244 (29 calls). Per call: Sonnet ~$0.0045 as mafia, ~$0.0075 as town; Haiku ~$0.0003-5.
   A game is 20-32 calls, so estimates per game: haiku ~$0.010, sonnet-vs-haiku ~$0.04-0.06,

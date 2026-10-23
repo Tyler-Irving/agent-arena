@@ -25,12 +25,24 @@ class TaskSpec(Protocol):
     def id(self) -> str: ...
 
 
+class Wording(BaseModel):
+    """How the CLI and the scoreboard talk about a plugin's tasks and scores."""
+
+    task: str  # one task: "3 problem(s)", "no problems match", "per-problem averages"
+    passed: str  # the scoreboard column that sums the scores, e.g. "passed"
+    rate: str  # the score rate: its scoreboard column, and "<rate> rate" in the notes, e.g. "pass"
+    summary: str  # a run's score in its summary line, from {passed} and {scored}: "{passed}/{scored} passed"
+
+
 class Plugin[T: TaskSpec](Protocol):
     name: str
     # mode -> roles a lineup in that mode must define
     modes: dict[str, set[str]]
     # model calls per task, whatever the lineup
     max_calls: int
+    # whether a lineup's max_attempts means anything here; the attempt limit is only shown if so
+    uses_attempts: bool
+    wording: Wording
     # SQL for the plugin's own tables (CREATE TABLE IF NOT EXISTS), run at the start of every run
     schema: str
 

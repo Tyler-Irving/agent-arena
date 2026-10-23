@@ -9,9 +9,9 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from arena.core.lineup import get_lineup
+from arena.core.lineup import get_lineup, load_lineups
 from arena.core.orchestrator import format_cost, run_lineup
-from arena.core.plugin import Outcome, PluginError
+from arena.core.plugin import Outcome, PluginError, Wording
 from arena.core.runlog import DEFAULT_DB, get_runlog
 from arena.core.scoreboard import format_scoreboard, scoreboard
 from arena.core.taskboard import SqliteTaskBoard
@@ -69,17 +69,16 @@ async def run(
         print(f"invalid lineup config: {e}", file=sys.stderr)
         return 2
     plugin = get_plugin(lineup.plugin)  # load_lineups already rejected unknown plugins
+    words = plugin.wording
     problems = plugin.load_tasks(problem)
     if not problems:
-        print(f"no problems match {problem!r}", file=sys.stderr)
+        print(f"no {words.task}s match {problem!r}", file=sys.stderr)
         return 2
 
     roles = ", ".join(f"{role}={cfg.model}" for role, cfg in lineup.roles.items())
+    limit = f"; max {lineup.max_attempts} attempts" if plugin.uses_attempts else ""
     times = f" x {repeat} runs" if repeat > 1 else ""
-    print(
-        f"lineup {lineup.name} ({lineup.mode}: {roles}; max {lineup.max_attempts} attempts), "
-        f"{len(problems)} problem(s){times}\n"
-    )
+    print(f"lineup {lineup.name} ({lineup.mode}: {roles}{limit}), {len(problems)} {words.task}(s){times}\n")
 
     board = SqliteTaskBoard()
     log = get_runlog()
@@ -94,7 +93,7 @@ async def run(
                     print(f"{e.what} unavailable, run aborted: {e}", file=sys.stderr)
                     return 2
                 summaries.append((run_id, outcomes))
-                print(summarize(run_id, outcomes) + "\n")
+                print(summarize(run_id, outcomes, words) + "\n")
         finally:
             # Also when stopped early, so the finished runs aren't lost in the scrollback.
             if repeat > 1 and summaries:
@@ -102,7 +101,7 @@ async def run(
                 done = f"{repeat}" if len(summaries) == repeat else f"{len(summaries)} of {repeat}"
                 print(f"{done} runs finished ({first}-{last}):")
                 for run_id, outcomes in summaries:
-                    print("  " + summarize(run_id, outcomes))
+                    print("  " + summarize(run_id, outcomes, words))
                 print(f"compare with earlier runs: arena scoreboard --since {first}")
         return 0
 
@@ -114,14 +113,14 @@ async def run(
     return await watch_run(runs(), log, ViewOptions(hide_roles=hide_roles))
 
 
-def summarize(run_id: int, outcomes: list[Outcome]) -> str:
+def summarize(run_id: int, outcomes: list[Outcome], words: Wording) -> str:
     passed = sum(o.score for o in outcomes)
     scored = sum(o.error is None for o in outcomes)
     errors = f" ({len(outcomes) - scored} not scored: model errors)" if scored < len(outcomes) else ""
     costs = [o.cost_usd for o in outcomes]
     total_cost = None if None in costs else sum(c for c in costs if c is not None)
     return (
-        f"run {run_id}: {passed:g}/{scored} passed{errors}, "
+        f"run {run_id}: {words.summary.format(passed=f'{passed:g}', scored=scored)}{errors}, "
         f"{sum(o.calls for o in outcomes)} calls, {format_cost(total_cost)}, "
         f"{sum(o.wall_time_ms for o in outcomes) / 1000:.1f}s"
     )
@@ -165,21 +164,33 @@ def run_stoppable(
         return 128 + received[0]
 
 
-def show_scoreboard(plugin: str, since: int | None) -> int:
+def show_scoreboard(plugin_name: str, since: int | None) -> int:
     try:
-        get_plugin(plugin)
+        plugin = get_plugin(plugin_name)
     except KeyError as e:
         print(e.args[0], file=sys.stderr)
         return 2
-    rows = scoreboard(get_runlog(), plugin, since=since)
+    rows = scoreboard(get_runlog(), plugin_name, since=since)
     if not rows:
-        hint = f" from run {since} on" if since else " yet; try `arena run --lineup haiku-solo`"
-        print(f"no runs{hint}")
+        if since:
+            print(f"no runs from run {since} on")
+        else:
+            example = first_lineup(plugin_name)
+            print("no runs yet" + (f"; try `arena run --lineup {example}`" if example else ""))
         return 0
     if since:
         print(f"runs {since} and later\n")
-    print(format_scoreboard(rows))
+    print(format_scoreboard(rows, plugin))
     return 0
+
+
+def first_lineup(plugin_name: str) -> str | None:
+    """The first lineup for the plugin in config/lineups.yaml, if the file loads and has one."""
+    try:
+        lineups = load_lineups(PLUGINS, DEFAULT_PLUGIN)
+    except (OSError, ValueError):
+        return None
+    return next((name for name, lineup in lineups.items() if lineup.plugin == plugin_name), None)
 
 
 def watch(run_id: int | None, hide_roles: bool) -> int:
@@ -214,7 +225,7 @@ def main() -> None:
 
     p_run = sub.add_parser("run", help="run problems with a lineup")
     p_run.add_argument("--lineup", required=True, help="lineup name from config/lineups.yaml")
-    p_run.add_argument("--problem", help='one problem, e.g. "001" (default: all)')
+    p_run.add_argument("--problem", "--game", help='one problem or game, e.g. "001" or "03" (default: all)')
     p_run.add_argument(
         "--repeat", type=positive_int, default=1, help="run the problems this many times (default: 1)"
     )

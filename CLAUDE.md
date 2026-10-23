@@ -105,6 +105,8 @@ class Plugin[T: TaskSpec](Protocol):   # TaskSpec: anything with an `id: str`
     name: str
     modes: dict[str, set[str]]         # mode -> roles a lineup in that mode must define
     max_calls: int                     # model calls per task (code_bounty: 20)
+    uses_attempts: bool                # does a lineup's max_attempts mean anything? (Mafia: no)
+    wording: Wording                   # task noun and score words for the CLI and scoreboard
     schema: str                        # SQL for the plugin's own tables, run at the start of each run
     def load_tasks(self, selector: str | None) -> list[T]: ...
     def validate_lineup(self, lineup: Lineup) -> None: ...      # raise ValueError
@@ -113,6 +115,7 @@ class Plugin[T: TaskSpec](Protocol):   # TaskSpec: anything with an `id: str`
 
 - `run_lineup(plugin, lineup, tasks, board, log, selector)` checks the lineup's plugin, mode and roles (`check_roles`), creates one `Session` per task and calls `run_task`. It knows nothing about grading, attempts or roles.
 - `Session.call(role_name, role_config, system, messages)` makes every model call: it enforces `max_calls` (raises `CallLimitReached`), tracks cost, and tags the run log with `role_name`, which can name a player ("villager-2") rather than a lineup role. Provider errors raise `ModelCallFailed`. It also logs `call_started`/`call_finished` events. `Session.emit(kind, **data)` logs a plugin event, so a plugin never touches the events table itself.
+- The CLI and scoreboard talk in the plugin's `wording`: `task` ("problem", "game"), `passed` and `rate` (scoreboard columns, "passed"/"pass", "town won"/"town win") and `summary` (a run's line, "{passed}/{scored} passed", "town won {passed}/{scored}"). The attempt limit and attempts columns only show when `uses_attempts`.
 - `run_task` returns `session.outcome(...)`: `score` 0.0-1.0, `attempts` (1 if the plugin doesn't retry), `verdict` (printed before the call count, e.g. "PASS in 2 attempt(s)"), `fail_reason` (the task board marks the task failed with it; None = done), `error` (provider error: not scored), `stop_reason`, and a free-form `metrics` dict stored as JSON.
 - A plugin normally catches `ModelCallFailed` and `CallLimitReached` itself. A `ModelCallFailed` that escapes `run_task` becomes an unscored error outcome. Any other exception fails the task with its message, marks the run interrupted (so the scoreboard doesn't count it as a full run) and propagates.
 - A plugin's infrastructure failure (e.g. `GraderError`) subclasses `PluginError`, with `what = "grader"`. `run_lineup` fails the task with "<what> error: ..." and re-raises, and the CLI aborts the run with "<what> unavailable, run aborted: ...".
@@ -195,7 +198,7 @@ Only one Ollama model should be loaded at a time (16GB VRAM). Run tasks sequenti
 
 ## Mafia
 
-One task is one game: `game-01`..`game-10` (`--problem 03` or `--problem game-03`). Code applies every rule in `game.py`; models only choose kills, checks, speeches and votes. Score is 1.0 if town won, else 0.0, so the scoreboard's pass column is the town win rate. The results metrics hold the winner, nights/days, the mafia, who left when, detective checks and mafia found, town votes and town votes on mafia, and invalid replies by kind.
+One task is one game: `game-01`..`game-10` (`--problem 03`, `--game 03` or `--problem game-03`). Code applies every rule in `game.py`; models only choose kills, checks, speeches and votes. Score is 1.0 if town won, else 0.0, so the scoreboard's "town won" and "town win" columns are the town wins and win rate. The results metrics hold the winner, nights/days, the mafia, who left when, detective checks and mafia found, town votes and town votes on mafia, and invalid replies by kind.
 
 Rules:
 - Lineups take `settings.players` 5-7 (default 7) and no `max_attempts` (a game has no attempts). 7 players: 2 mafia, 1 detective, 4 villagers; 5-6: 1 mafia, 1 detective, the rest villagers. Names come from a fixed list.

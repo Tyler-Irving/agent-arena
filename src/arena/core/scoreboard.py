@@ -11,9 +11,13 @@ runs of different task sets aren't compared.
 """
 
 import json
+import textwrap
+from collections.abc import Callable
+from typing import Any
 
 from pydantic import BaseModel
 
+from arena.core.plugin import Plugin
 from arena.core.runlog import RunLog
 
 # Results logged before plugins have no score; their passed flag is the score.
@@ -136,40 +140,27 @@ def scoreboard(log: RunLog, plugin: str, since: int | None = None) -> list[Score
     )
 
 
-def format_scoreboard(rows: list[ScoreRow]) -> str:
-    headers = [
-        "lineup",
-        "limit",
-        "runs",
-        "passed",
-        "pass",
-        "per run",
-        "attempts",
-        "in tok",
-        "out tok",
-        "reasoning",
-        "cost",
-        "total",
-        "time",
+def format_scoreboard(rows: list[ScoreRow], plugin: Plugin[Any]) -> str:
+    """The table, in the plugin's words. Attempt columns only for plugins that use attempts."""
+    words = plugin.wording
+    attempts = plugin.uses_attempts
+    columns: list[tuple[str, Callable[[ScoreRow], str]]] = [
+        ("lineup", lambda r: r.label),
+        *([("limit", lambda r: "?" if r.max_attempts is None else str(r.max_attempts))] if attempts else []),
+        ("runs", lambda r: str(r.runs)),
+        (words.passed, lambda r: f"{_count(r.passed)}/{r.trials}"),
+        (words.rate, lambda r: f"{r.pass_rate:.0%}"),
+        ("per run", lambda r: _range(r.run_low, r.run_high)),
+        *([("attempts", lambda r: f"{r.avg_attempts:.2f}")] if attempts else []),
+        ("in tok", lambda r: f"{r.avg_input_tokens:,.0f}"),
+        ("out tok", lambda r: f"{r.avg_output_tokens:,.0f}"),
+        ("reasoning", lambda r: f"{r.avg_reasoning_tokens:,.0f}"),
+        ("cost", lambda r: _cost(r.avg_cost_usd)),
+        ("total", lambda r: _cost(r.total_cost_usd)),
+        ("time", lambda r: f"{r.avg_wall_time_ms / 1000:.1f}s"),
     ]
-    table = [
-        [
-            r.label,
-            "?" if r.max_attempts is None else str(r.max_attempts),
-            str(r.runs),
-            f"{_count(r.passed)}/{r.trials}",
-            f"{r.pass_rate:.0%}",
-            _range(r.run_low, r.run_high),
-            f"{r.avg_attempts:.2f}",
-            f"{r.avg_input_tokens:,.0f}",
-            f"{r.avg_output_tokens:,.0f}",
-            f"{r.avg_reasoning_tokens:,.0f}",
-            _cost(r.avg_cost_usd),
-            _cost(r.total_cost_usd),
-            f"{r.avg_wall_time_ms / 1000:.1f}s",
-        ]
-        for r in rows
-    ]
+    headers = [header for header, _ in columns]
+    table = [[cell(r) for _, cell in columns] for r in rows]
     widths = [max(len(row[i]) for row in [headers, *table]) for i in range(len(headers))]
 
     def line(cells: list[str]) -> str:
@@ -178,15 +169,20 @@ def format_scoreboard(rows: list[ScoreRow]) -> str:
             c.ljust(w) if i == 0 else c.rjust(w) for i, (c, w) in enumerate(zip(cells, widths, strict=True))
         )
 
+    notes = [
+        *([f"limit = max attempts per {words.task};"] if attempts else []),
+        f"per run = lowest-highest {words.rate} rate of a single full run (- if none);",
+        f"{'attempts, ' if attempts else ''}tokens, cost and time are per-{words.task} averages;",
+        "total is all runs;",
+        "? = unpriced model" + (", or limit not recorded" if attempts else ""),
+    ]
     return "\n".join(
         [
             line(headers),
             "  ".join("-" * w for w in widths),
             *(line(row) for row in table),
             "",
-            "limit = max attempts per problem; per run = lowest-highest pass rate of a single full run",
-            "(- if none); attempts, tokens, cost and time are per-problem averages; total is all runs;",
-            "? = unpriced model, or limit not recorded",
+            textwrap.fill(" ".join(notes), width=90, break_on_hyphens=False),
         ]
     )
 

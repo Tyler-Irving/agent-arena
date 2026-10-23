@@ -3,7 +3,7 @@
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from arena.core.lineup import Lineup
-from arena.core.plugin import Outcome, Session
+from arena.core.plugin import Outcome, Session, Wording
 from arena.plugins.mafia.game import MAX_PLAYERS, MIN_PLAYERS
 from arena.plugins.mafia.loop import EVENTS_SCHEMA, MafiaGame
 
@@ -26,6 +26,9 @@ class Mafia:
     # The longest 7-player game takes 45 calls (game.worst_case_calls), so a
     # legal game never reaches this.
     max_calls = 60
+    uses_attempts = False
+    # score 1.0 = town won, so the summed scores count town wins
+    wording = Wording(task="game", passed="town won", rate="town win", summary="town won {passed}/{scored}")
     schema = EVENTS_SCHEMA
 
     def load_tasks(self, selector: str | None) -> list[Game]:

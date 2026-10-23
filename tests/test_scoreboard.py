@@ -4,6 +4,7 @@ import pytest
 
 from arena.core.runlog import RunLog
 from arena.core.scoreboard import format_scoreboard, scoreboard
+from arena.plugins.code_bounty.plugin import PLUGIN as CODE_BOUNTY
 
 
 def _trial(
@@ -67,7 +68,7 @@ def test_different_settings_get_their_own_row(tmp_path: Path) -> None:
         log.finish_run(run)
     rows = {r.label: r for r in scoreboard(log, "duel")}
     assert {label: r.runs for label, r in rows.items()} == {"game": 1, "game [players=5]": 2}
-    assert "game [players=5]" in format_scoreboard(list(rows.values()))
+    assert "game [players=5]" in format_scoreboard(list(rows.values()), CODE_BOUNTY)
 
 
 def test_aggregates_per_lineup(log: RunLog) -> None:
@@ -99,7 +100,7 @@ def test_order_pass_rate_then_cost(log: RunLog) -> None:
 
 
 def test_format(log: RunLog) -> None:
-    text = format_scoreboard(scoreboard(log, "code_bounty"))
+    text = format_scoreboard(scoreboard(log, "code_bounty"), CODE_BOUNTY)
     lines = text.splitlines()
     assert lines[0].split()[:5] == ["lineup", "limit", "runs", "passed", "pass"]
     assert "3/4" in text and "75%" in text and "$0.0200" in text
@@ -110,7 +111,7 @@ def test_format(log: RunLog) -> None:
 def test_per_run_range(log: RunLog) -> None:
     rows = {r.lineup: r for r in scoreboard(log, "code_bounty")}
     assert (rows["cheap"].run_low, rows["cheap"].run_high) == (0.5, 1.0)
-    text = format_scoreboard(scoreboard(log, "code_bounty"))
+    text = format_scoreboard(scoreboard(log, "code_bounty"), CODE_BOUNTY)
     cheap = next(line for line in text.splitlines() if line.startswith("cheap"))
     local = next(line for line in text.splitlines() if line.startswith("local"))
     assert "50%-100%" in cheap.split()
@@ -144,7 +145,7 @@ def test_range_leaves_out_partial_runs(log: RunLog) -> None:
     assert (local.run_low, local.run_high) == (1.0, 1.0)
     # a lineup with no full run shows no range
     assert {r.lineup: r for r in scoreboard(log, "code_bounty", since=single)}["local"].run_low is None
-    assert "  -  " in format_scoreboard(scoreboard(log, "code_bounty", since=single))
+    assert "  -  " in format_scoreboard(scoreboard(log, "code_bounty", since=single), CODE_BOUNTY)
 
 
 def test_attempt_limits_get_separate_rows(log: RunLog) -> None:
@@ -156,7 +157,7 @@ def test_attempt_limits_get_separate_rows(log: RunLog) -> None:
     assert set(cheap) == {3, 5}
     assert (cheap[3].runs, cheap[5].runs) == (2, 1)
     assert (cheap[5].run_low, cheap[5].run_high) == (1.0, 1.0)
-    lines = format_scoreboard(scoreboard(log, "code_bounty")).splitlines()
+    lines = format_scoreboard(scoreboard(log, "code_bounty"), CODE_BOUNTY).splitlines()
     assert sorted(line.split()[1] for line in lines if line.startswith("cheap")) == ["3", "5"]
     # runs logged before the limit was recorded show "?"
     assert next(line for line in lines if line.startswith("local")).split()[1] == "?"

@@ -14,7 +14,7 @@ from arena import cli
 from arena.core import orchestrator
 from arena.core import plugin as core_plugin
 from arena.core.lineup import LINEUPS_FILE, Lineup, get_lineup, load_lineups
-from arena.core.plugin import Outcome, Session
+from arena.core.plugin import Outcome, Session, Wording
 from arena.core.runlog import RunLog
 from arena.core.taskboard import SqliteTaskBoard
 from arena.models.router import ModelResponse
@@ -33,6 +33,8 @@ class Duel:
     name = "duel"
     modes: dict[str, set[str]] = {"duel": {"player", "judge"}}
     max_calls = 5
+    uses_attempts = False
+    wording = Wording(task="round", passed="won", rate="win", summary="won {passed}/{scored}")
     schema = "CREATE TABLE IF NOT EXISTS duel_rounds (problem_id TEXT, winner TEXT);"
 
     def load_tasks(self, selector: str | None) -> list[Round]:

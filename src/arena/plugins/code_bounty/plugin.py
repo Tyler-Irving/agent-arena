@@ -1,7 +1,7 @@
 """The code bounty plugin: coding problems, solved solo or by a team, graded in a sandbox."""
 
 from arena.core.lineup import Lineup
-from arena.core.plugin import Outcome, Session
+from arena.core.plugin import Outcome, Session, Wording
 from arena.plugins.code_bounty.loop import ATTEMPTS_SCHEMA, solve_solo, solve_team
 from arena.plugins.code_bounty.problems import Problem, load_problems
 
@@ -13,6 +13,8 @@ class CodeBounty:
         "team": {"orchestrator", "planner", "coder", "reviewer"},
     }
     max_calls = 20  # model calls per problem, whatever the lineup
+    uses_attempts = True
+    wording = Wording(task="problem", passed="passed", rate="pass", summary="{passed}/{scored} passed")
     schema = ATTEMPTS_SCHEMA
 
     def load_tasks(self, selector: str | None) -> list[Problem]:

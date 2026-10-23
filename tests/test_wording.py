@@ -7,7 +7,7 @@ say in the wording, so any change to it shows up as a diff.
 import asyncio
 import re
 
-from scripted import grade, reply
+from scripted import TOWN_WINS, grade, mafia_complete, reply
 
 from arena import cli
 from arena.core import plugin as core_plugin
@@ -111,3 +111,34 @@ def test_code_bounty_no_match_and_scoreboards_are_unchanged(monkeypatch, tmp_pat
     for since in (None, 2, 3):
         assert cli.show_scoreboard("code_bounty", since) == 0
     assert wall_times(capsys.readouterr().out) == BOUNTY_SCOREBOARDS
+
+
+def test_mafia_speaks_of_games_and_town_wins_without_attempts(monkeypatch, tmp_path, capsys) -> None:
+    log = RunLog(tmp_path / "arena.db")
+    monkeypatch.setattr(core_plugin, "complete", mafia_complete(TOWN_WINS))
+    monkeypatch.setattr(cli, "get_runlog", lambda: log)
+    monkeypatch.setattr(cli, "SqliteTaskBoard", lambda: SqliteTaskBoard(tmp_path / "arena.db"))
+
+    assert asyncio.run(cli.run("mafia-gptoss", "11", repeat=1)) == 2
+    assert cli.show_scoreboard("mafia", None) == 0
+    out = capsys.readouterr()
+    assert out.err == "no games match '11'\n"
+    assert out.out == "no runs yet; try `arena run --lineup mafia-haiku`\n"
+
+    assert asyncio.run(cli.run("mafia-gptoss", "01", repeat=2)) == 0
+    out = capsys.readouterr().out
+    header = out.splitlines()[0]
+    assert header.startswith("lineup mafia-gptoss (game: narrator=ollama/gpt-oss:20b, ")
+    assert header.endswith("), 1 game(s) x 2 runs") and "attempts" not in header
+    assert re.search(r"^run 1: town won 1/1, 29 calls, ", out, re.MULTILINE)
+    assert re.search(r"^  run 2: town won 1/1, 29 calls, ", out, re.MULTILINE)
+
+    assert cli.show_scoreboard("mafia", None) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert re.split(r"\s{2,}", lines[0])[:5] == ["lineup", "runs", "town won", "town win", "per run"]
+    assert "limit" not in lines[0] and "attempts" not in lines[0]
+    assert re.split(r"\s{2,}", lines[2])[:5] == ["mafia-gptoss", "2", "2/2", "100%", "-"]
+    assert lines[4:] == [
+        "per run = lowest-highest town win rate of a single full run (- if none); tokens, cost and",
+        "time are per-game averages; total is all runs; ? = unpriced model",
+    ]

@@ -501,6 +501,13 @@ Same deal every time: Blake + Emery mafia, Avery detective (game-01).
     per-side table and get "each model's players, by role" (voted out = caught, killed, alive, their
     votes on mafia) and "town win rate by the detective's model". No event change (no EVENTS_VERSION
     bump); the viewer already showed per-call models.
+    /code-review: 9 findings, 8 fixed (123f991): mixed tables split by matchup + an UNBALANCED note
+    when a pair's halves ran different deals; same model on both seats only as think true v false;
+    metrics["mode"] recorded and read; unused roles rejected in core check_roles (every plugin);
+    model lookup from calls/events only for games without metrics.models; one-pass vote counts;
+    notes only for shown tables; no crash without deal rows. Skipped: re-checking 7 players at run
+    time (validate_lineup runs at load, same as code_bounty's attempt limit). Two fixes mutation-
+    checked. 273 tests.
     Estimates per pair (20 games): Haiku/Sonnet ~$1.35 (half the seats Sonnet, ~$0.067/game);
     gpt-oss/Haiku ~$0.10 (Haiku seats only). Not run yet; the user starts paid runs.
   - Still open: the vote rule question from run 38 (majority of the living to eliminate?), as a

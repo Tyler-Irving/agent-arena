@@ -227,6 +227,7 @@ class MafiaGame:
             "town_votes": self.town_votes,
             "town_votes_on_mafia": self.town_votes_on_mafia,
             "invalid": self.invalid,
+            "mode": self.lineup.mode,
             # each player's model, also for a player killed before their first call
             "models": {name: {"model": cfg.model, "think": cfg.think} for name, cfg in self.models.items()},
         }

@@ -236,20 +236,20 @@ def test_a_model_on_both_sides_is_not_against_other_models(monkeypatch, tmp_path
 # The pair swaps the models, so each model plays each seat once: 2 mafia, 1 detective, 4 villagers.
 MIXED_TABLES = """\
 Mixed seats: each model's players, by role
-model  role       players  voted out    killed  alive at end  their votes on mafia
------  ---------  -------  ---------  --------  ------------  --------------------
-a      mafia            2   1/2  50%  0/2   0%      1/2  50%                     -
-a      detective        1   0/1   0%  0/1   0%      1/1 100%                     -
-a      villager         4   0/4   0%  3/4  75%      1/4  25%              3/3 100%
-b      mafia            2   1/2  50%  0/2   0%      1/2  50%                     -
-b      detective        1   0/1   0%  0/1   0%      1/1 100%              2/2 100%
-b      villager         4   0/4   0%  2/4  50%      2/4  50%              2/2 100%
+matchup  model  role       players  voted out    killed  alive at end  their votes on mafia
+-------  -----  ---------  -------  ---------  --------  ------------  --------------------
+a vs b   a      mafia            2   1/2  50%  0/2   0%      1/2  50%                     -
+a vs b   a      detective        1   0/1   0%  0/1   0%      1/1 100%                     -
+a vs b   a      villager         4   0/4   0%  3/4  75%      1/4  25%              3/3 100%
+a vs b   b      mafia            2   1/2  50%  0/2   0%      1/2  50%                     -
+a vs b   b      detective        1   0/1   0%  0/1   0%      1/1 100%              2/2 100%
+a vs b   b      villager         4   0/4   0%  2/4  50%      2/4  50%              2/2 100%
 
 Mixed seats: town win rate by the detective's model
-detective  games  town won
----------  -----  --------
-a              1  0/1   0%
-b              1  1/1 100%
+matchup  detective  games  town won
+-------  ---------  -----  --------
+a vs b   a              1  0/1   0%
+a vs b   b              1  1/1 100%
 """
 
 
@@ -281,6 +281,26 @@ def test_side_games_and_mixed_games_report_side_by_side(monkeypatch, tmp_path) -
         ["strong", "0/1", "0%", "0/1", "0%", "-", "-"],
         ["weak", "-", "-", "1/1", "100%", "1/1", "100%"],
     ]
-    assert [row.split()[:3] for row in section(text, "Mixed seats: each model's players, by role")][:1] == [
-        ["a", "mafia", "1"]
-    ]
+    mixed_rows = section(text, "Mixed seats: each model's players, by role")
+    assert mixed_rows[0].split()[:6] == ["a", "vs", "b", "a", "mafia", "1"]
+    # only one half of the pair ran
+    assert "UNBALANCED a vs b: 1 with a in seats_a, 0 with b in seats_a" in text
+
+
+def test_mixed_games_are_kept_apart_by_matchup(monkeypatch, tmp_path) -> None:
+    play_mafia(monkeypatch, tmp_path, TOWN_WINS, roles=MIXED_ROLES, mode="mixed", name="mixed-ab")
+    other = {"narrator": "fake/narrator", "seats_a": "fake/a", "seats_b": "fake/c"}
+    log, _ = play_mafia(monkeypatch, tmp_path, TOWN_WINS, roles=other, mode="mixed", name="mixed-ac")
+    rows = section(
+        format_report(load_games(log.db, "mafia", None), None),
+        "Mixed seats: town win rate by the detective's model",
+    )
+    assert [row.split()[:4] for row in rows] == [["a", "vs", "b", "b"], ["a", "vs", "c", "c"]]
+
+
+def test_a_mixed_game_without_its_deal_rows_still_reports(monkeypatch, tmp_path) -> None:
+    log, _ = play_mafia(monkeypatch, tmp_path, TOWN_WINS, roles=MIXED_ROLES, mode="mixed")
+    log.db.execute("DELETE FROM mafia_events WHERE kind = 'role'")
+    [game] = load_games(log.db, "mafia", None)
+    assert (game.mixed, game.seats, game.seats_a) == (True, [], "?")
+    assert "Mixed seats: town win rate" in format_report([game], None)

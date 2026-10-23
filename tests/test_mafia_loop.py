@@ -135,6 +135,7 @@ def test_town_wins(monkeypatch, tmp_path, capsys) -> None:
         "town_votes": 7,
         "town_votes_on_mafia": 7,
         "invalid": {"target": 0, "check": 0, "vote": 0},
+        "mode": "game",
         "models": {
             name: {"model": ROLES[role], "think": None}
             for name, role in [
@@ -373,10 +374,13 @@ def test_mixed_lineups(tmp_path: Path) -> None:
         _load(tmp_path, _mixed(settings="  settings: { players: 6 }\n"))
     with pytest.raises(ValueError, match="seats_a and seats_b are the same model"):
         _load(tmp_path, _mixed(b="a/x"))
-    _load(tmp_path, _mixed("{ model: a/x, think: true }", "{ model: a/x, think: false }"))  # a fair pair
-    with pytest.raises(ValueError, match=r"a mixed lineup takes no roles \['mafia'\]"):
+    # think unset v true can send the very same requests, so only explicit on v off is a pair
+    with pytest.raises(ValueError, match="seats_a and seats_b are the same model"):
+        _load(tmp_path, _mixed(b="{ model: a/x, think: true }"))
+    _load(tmp_path, _mixed("{ model: a/x, think: true }", "{ model: a/x, think: false }"))
+    with pytest.raises(ValueError, match=r"mixed lineup 'm' has roles it doesn't use: \['mafia'\]"):
         _load(tmp_path, _mixed(extra=", mafia: a/z"))
-    with pytest.raises(ValueError, match=r"a game lineup takes no roles \['seats_a'\]"):
+    with pytest.raises(ValueError, match=r"game lineup 'g' has roles it doesn't use: \['seats_a'\]"):
         _load(tmp_path, _yaml().replace("villager: ollama/x", "villager: ollama/x, seats_a: a/x"))
 
 

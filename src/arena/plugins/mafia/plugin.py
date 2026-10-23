@@ -51,17 +51,20 @@ class Mafia:
 
     def validate_lineup(self, lineup: Lineup) -> None:
         players = settings(lineup).players
-        # A role the mode doesn't use would be silently ignored (e.g. `mafia:` in a mixed lineup).
-        if extra := sorted(lineup.roles.keys() - self.modes[lineup.mode]):
-            raise ValueError(f"lineup {lineup.name!r}: a {lineup.mode} lineup takes no roles {extra}")
         if lineup.mode == "mixed":
             if players != MAX_PLAYERS:
                 raise ValueError(
                     f"lineup {lineup.name!r}: mixed seats need {MAX_PLAYERS} players (two mafia), "
                     f"got {players}"
                 )
-            if lineup.roles["seats_a"] == lineup.roles["seats_b"]:
-                raise ValueError(f"lineup {lineup.name!r}: seats_a and seats_b are the same model")
+            a, b = lineup.roles["seats_a"], lineup.roles["seats_b"]
+            # One model on both seats is a fair pair only as explicit thinking on v off; anything
+            # else (e.g. think unset v true) may send the very same requests.
+            if a.model == b.model and {a.think, b.think} != {True, False}:
+                raise ValueError(
+                    f"lineup {lineup.name!r}: seats_a and seats_b are the same model; one model is "
+                    "only a pair as think: true v think: false"
+                )
         # A game has no attempts; an ignored max_attempts would still split the scoreboard row.
         if "max_attempts" in lineup.model_fields_set:
             raise ValueError(f"lineup {lineup.name!r}: a mafia game has no attempts, remove max_attempts")

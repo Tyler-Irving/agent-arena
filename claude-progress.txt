@@ -232,12 +232,124 @@ Same deal every time: Blake + Emery mafia, Avery detective (game-01).
   run/--repeat help; tests derive the hint's lineup from lineups.yaml; the duel settings test formats
   with a no-attempts plugin; format_scoreboard tags attempts-only columns/notes once (format_table
   helper). Two fixes mutation-checked (reverting fails a test). 241 tests.
+  PR #18 (open).
+- Part 2 DONE: run 37 = mafia-gptoss on game-01..10 (one full run, free, 2026-10-23). TOWN WON 2/10.
+  | run | game    | winner | ended on | calls | wall  | town votes on mafia | who left (v/m/d), when
+  | 37  | game-01 | MAFIA  | night 2  | 21    | 146 s | 0/4 | Finley(v) n1, Gray(v) d1, Avery(d) n2
+  | 37  | game-02 | TOWN   | day 2    | 29    | 193 s | 6/6 | Gray(v) n1, Finley(m) d1, Avery(v) n2, Emery(m) d2
+  | 37  | game-03 | MAFIA  | night 2  | 20    | 122 s | 1/3 | Gray(d) n1, Avery(v) d1, Finley(v) n2
+  | 37  | game-04 | MAFIA  | night 3  | 31    | 283 s | 5/7 | Gray(v) n1, Finley(m) d1, Blake(d) n2, Avery(v) d2, Casey(v) n3
+  | 37  | game-05 | MAFIA  | night 2  | 20    | 138 s | 2/4 | Gray(d) n1, Drew(v) d1, Finley(v) n2
+  | 37  | game-06 | TOWN   | day 2    | 29    | 205 s | 7/7 | Avery(v) n1, Finley(m) d1, Blake(v) n2, Emery(m) d2
+  | 37  | game-07 | MAFIA  | night 2  | 21    | 131 s | 0/4 | Gray(v) n1, Casey(v) d1, Drew(d) n2
+  | 37  | game-08 | MAFIA  | night 2  | 20    | 112 s | 0/0 | Gray(v) n1, Drew(d) d1, Casey(v) n2
+  | 37  | game-09 | MAFIA  | night 3  | 32    | 278 s | 4/7 | Finley(v) n1, Emery(m) d1, Gray(v) n2, Blake(v) d2, Avery(d) n3
+  | 37  | game-10 | MAFIA  | night 2  | 21    | 112 s | 1/4 | Finley(v) n1, Drew(v) d1, Gray(d) n2
+  Total 244 calls, 28.7 min (wall times read ~10% high, see the WSL2 clock note). The background shell
+  reported exit -1, but the run itself finished cleanly (finished_at set, interrupted 0, run_finished).
+  - Invalid replies: 1 in 10 games (game-04, one invalid kill target -> seeded random kill); 0 invalid
+    checks, 0 invalid votes (8 null votes were deliberate `VOTE: none`).
+  - Leak audit (same checks as before, over every stored prompt of runs 27-33, 36, 37): narrator-only
+    sentences in no player prompt, partner/proposal text only in mafia prompts, check results only in
+    the detective's, every prompt opens with its own player's identity, no day-N vote prompt holds day
+    N's votes, narrator prompts hold only "Facts:" lines. 0 problems in 18 games. Checked the audit
+    itself by planting 4 leaks in a copy of the db: all 4 caught.
+  - Pattern: with 7 players, eliminating a villager on day 1 loses on night 2 (5 -> 4 alive, 2 mafia
+    v 2 town); abstaining (no elimination) would not. All 10 night-2 endings in the db are exactly
+    that. gpt-oss town put 26/46 votes (57%) on mafia in run 37 but split them, so the plurality missed.
+- Part 3 feat/mafia-report: `arena report [--plugin mafia] [--since RUN_ID]`. Optional Plugin hook
+  `report(log, since) -> str` (core.plugin.Reports, isinstance-checked by the CLI); plugins/mafia/
+  report.py. Stores nothing new: results + metrics; models per side from calls (with think), falling back
+  to call_started events for games without call rows (scripted tests); claims from mafia_events speeches.
+  Note: the events table alone can't serve it, runs 27-31 (all the paid matchups) predate events.
+  Sections: town win rate per lineup; win rate per model per side, also "vs other models" (games where
+  no model plays both sides); per deal; endings by phase/number; town votes on mafia, detective checks/
+  claimed/survived/voted out; invalid replies, calls, cost and time per game. Counts beside every rate.
+  /code-review: 9 findings, all fixed (crash on a db without mafia_events, default --plugin, think
+  setting blended, deal keyed on settings JSON, side overlap in "vs other models", union cost, shared
+  cost_cell, a hard-coded WSL note, "I checked" too broad). 262 tests.
+  `arena report` on data/arena.db (2026-10-23, after run 37):
+
+  18 game(s) from 9 run(s), runs 27-37
+
+  Town win rate by lineup
+  lineup                 mafia              town               games   town won
+  ---------------------  -----------------  -----------------  -----  ---------
+  mafia-gptoss           gpt-oss:20b        gpt-oss:20b           15  4/15  27%
+  mafia-haiku            claude-haiku-5-5   claude-haiku-5-5       1   1/1 100%
+  mafia-haiku-vs-sonnet  claude-haiku-5-5   claude-sonnet-5-5      1   1/1 100%
+  mafia-sonnet-vs-haiku  claude-sonnet-5-5  claude-haiku-5-5       1   0/1   0%
+
+  Win rate by model and side, across lineups
+  model              won as mafia  vs other models  won as town  vs other models
+  -----------------  ------------  ---------------  -----------  ---------------
+  claude-haiku-5-5       0/2   0%         0/1   0%     1/2  50%         0/1   0%
+  claude-sonnet-5-5      1/1 100%         1/1 100%     1/1 100%         1/1 100%
+  gpt-oss:20b          11/15  73%                -    4/15  27%                -
+
+  By deal (each game id deals the same seats in every lineup)
+  game     mafia          games  town won
+  -------  -------------  -----  --------
+  game-01  Blake, Emery       5  2/5  40%
+  game-02  Finley, Emery      2  2/2 100%
+  game-03  Emery, Casey       2  0/2   0%
+  game-04  Finley, Emery      2  1/2  50%
+  game-05  Blake, Emery       2  0/2   0%
+  game-06  Finley, Emery      1  1/1 100%
+  game-07  Avery, Blake       1  0/1   0%
+  game-08  Avery, Finley      1  0/1   0%
+  game-09  Emery, Casey       1  0/1   0%
+  game-10  Avery, Blake       1  0/1   0%
+
+  How games end
+  ended on        games  town won  mafia won
+  ---------  ----------  --------  ---------
+  night 2            10         0         10
+  day 2               6         6          0
+  night 3             2         0          2
+  any night  12/18  67%         0         12
+  any day     6/18  33%         6          0
+
+  Town play by lineup
+  lineup                 games  town votes on mafia  checks found mafia  det. claimed  det. survived  det. voted out
+  ---------------------  -----  -------------------  ------------------  ------------  -------------  --------------
+  mafia-gptoss              15           40/64  62%          11/26  42%     9/15  60%      3/15  20%       2/15  13%
+  mafia-haiku                1             6/7  86%            2/2 100%      1/1 100%       0/1   0%        0/1   0%
+  mafia-haiku-vs-sonnet      1             6/7  86%            0/2   0%      1/1 100%       1/1 100%        0/1   0%
+  mafia-sonnet-vs-haiku      1             2/4  50%            0/1   0%      0/1   0%       0/1   0%        1/1 100%
+
+  Invalid replies, calls and cost per game, by lineup
+  lineup                 games  invalid (kill/check/vote)  calls     cost  time
+  ---------------------  -----  -------------------------  -----  -------  ----
+  mafia-gptoss              15                  2 (1/0/1)   24.2  $0.0000  170s
+  mafia-haiku                1                  0 (0/0/0)   29.0  $0.0100  119s
+  mafia-haiku-vs-sonnet      1                  0 (0/0/0)   29.0  $0.1244  146s
+  mafia-sonnet-vs-haiku      1                  0 (0/0/0)   20.0  $0.0394   69s
+
+  Rates come with their counts (won/games); one game per cell is noise, not evidence.
+  A game with one model on both sides counts for it as mafia and as town; "vs other models"
+  leaves those games out.
+  claimed = the detective said "I'm the detective" or "I checked <name>" in a speech (a
+  text match: a claim made only by implication is missed).
+
+- Paid matchup plan (proposed, NOT run; needs the user's approval). Per-game costs measured so far:
+  mafia-haiku $0.0100 (29 calls), mafia-sonnet-vs-haiku $0.0394 (20 calls, a short game), mafia-haiku-
+  vs-sonnet $0.1244 (29 calls). Per call: Sonnet ~$0.0045 as mafia, ~$0.0075 as town; Haiku ~$0.0003-5.
+  A game is 20-32 calls, so estimates per game: haiku ~$0.010, sonnet-vs-haiku ~$0.04-0.06,
+  haiku-vs-sonnet ~$0.09-0.13, an all-Sonnet game (no lineup yet) ~$0.15-0.20.
+  Every option runs all ten deals per lineup (one full run each), so deal effects cancel:
+  A. mafia-haiku, mafia-sonnet-vs-haiku, mafia-haiku-vs-sonnet x 10 games: ~$0.10 + ~$0.50 + ~$1.20
+     = ~$1.80. Gives Haiku and Sonnet 10 games per side against each other, plus a Haiku mirror.
+  B. A + new mafia-sonnet (all Sonnet) x 10: + ~$1.80 = ~$3.60. Completes the 2x2 (mirror per model).
+  C. new mafia-gptoss-vs-haiku / mafia-haiku-vs-gptoss x 10 each (one ollama model, allowed): only the
+     Haiku seats cost, ~$0.05 per lineup. Puts the 15 free gpt-oss games against another model.
+  Recommended: A + C (~$1.90). Even 10 games per cell is wide (3/10 -> 95% CI ~7-65%); repeat A
+  for 20 per cell (~$3.70 total) if the first pass shows a gap worth confirming.
+  Commands for the user (auto mode blocks paid runs): `! uv run arena run --lineup mafia-haiku`, etc.
 
 ## Mafia gaps (core assumptions Mafia would still hit; not fixed yet)
-1. PARTLY: the score is decided: 1.0 = town won, so the scoreboard's pass column is the town win rate.
-   Still open: one Mafia lineup plays both sides and the scoreboard groups by lineup only, so win rate
-   per side/model needs its own report. The limit/attempts columns, the "passed" wording and the
-   footer are bounty-shaped.
+1. DONE: 1.0 = town won; the scoreboard shows "town won"/"town win" (fix/mafia-wording), and
+   `arena report --plugin mafia` (feat/mafia-report) splits win rates by model and side.
 2. DONE (fix/mafia-wording): Plugin.uses_attempts; the run header's "max N attempts" and the
    scoreboard's limit/attempts columns show only when it is True (Mafia: False). runs.max_attempts is
    still recorded (3 for Mafia) and still part of the scoreboard row key.

@@ -63,13 +63,13 @@ WHERE runs.plugin = :plugin AND runs.id >= :since AND speech.kind = 'speech'
 """
 
 # A detective claims by naming the role ("I'm the detective") or reporting a
-# check in the first person ("I checked Blake", "my check"). A text match, so
+# check in the first person ("I checked Blake", "I've checked Blake", "my check"). A text match, so
 # a hint rather than a fact: a claim made only by implication ("Finley was not
 # mafia") is missed. "I checked" counts only before a capitalised name, so "I
 # checked the votes" isn't a claim.
 CLAIM = re.compile(
     r"\b(?i:I(?:'|’)?m|I am) (?i:the |your )?(?i:detective)\b"
-    r"|\bI (?i:checked|investigated) [A-Z]"
+    r"|\bI(?:(?:'|’)ve| have)? (?i:checked|investigated) [A-Z]"
     r"|\b(?i:my (?:last |first |night \d )?checks?)\b"
 )
 

@@ -5,7 +5,8 @@
   (step 7 = PR #13 plugin interface, tag step-7-plugins; step 8 = PR #14 Mafia plugin, tag step-8-mafia).
 - Session 2026-10-23, three parts (user's plan): 1. fix/mafia-wording (gaps #2 + #6, root skipif),
   2. mafia-gptoss on game-01..10 (free), 3. feat/mafia-report (`arena report --plugin mafia`), then
-  propose a paid matchup plan and stop for approval. Status per part under "Session 2026-10-23" below. Paid runs (anthropic/*) need the user's OK; auto mode
+  propose a paid matchup plan and stop for approval. All done: PR #18 (wording) and PR #19 (report,
+  stacked on #18) open; paid plan A + C run as runs 38-42 ($1.58). See "Session 2026-10-23" below. Paid runs (anthropic/*) need the user's OK; auto mode
   blocks them, so the user may run them with `! uv run arena run ...`.
 - GitHub: https://github.com/Tyler-Irving/agent-arena (public). main has steps 1-9, merged
   through one PR per step; each step's tag points at its PR's merge commit (from step 6 on).
@@ -334,7 +335,7 @@ Same deal every time: Blake + Emery mafia, Avery detective (game-01).
   claimed = the detective said "I'm the detective" or "I checked <name>" in a speech (a
   text match: a claim made only by implication is missed).
 
-- Paid matchup plan: user approved A + C on 2026-10-23 (~$1.90). Lineups mafia-gptoss-vs-haiku and
+- Paid matchup plan: user approved A + C on 2026-10-23 (~$1.90). DONE: runs 38-42, $1.58. Lineups mafia-gptoss-vs-haiku and
   mafia-haiku-vs-gptoss added to config/lineups.yaml (Haiku narrator, like the other cross lineups).
   The user starts the runs (auto mode blocks paid runs); compare with `arena report --since 38`.
   - run 38 mafia-haiku (10 games): TOWN WON 1/10 (game-05, day 2), $0.0658 total ($0.0047-0.0106 per
@@ -363,16 +364,103 @@ Same deal every time: Blake + Emery mafia, Avery detective (game-01).
     terminal; SQLite WAL + default 5 s busy wait handled the two writers). gpt-oss mafia speeches are
     shorter (317 chars mean vs 430 for Haiku town; runs 38-40 mafia and town match within 15 chars),
     and one gpt-oss mafia campaigned against its own partner (game-02: Emery -> "vote Finley").
-  - CONFOUND (the main finding so far): mirror games go to mafia, cross-model games to town. Runs 37-41:
-    mirror (one model both sides) town 3/20; cross-model town 25/30; Fisher two-sided p ~ 2e-6. Haiku
-    town: 1/10 v Haiku mafia, 7/10 v Sonnet mafia (p 0.02), 9/10 v gpt-oss mafia (p 0.001). Haiku
-    mafia: 9/10 town wins v Sonnet town, 1/10 v Haiku town (p 0.001). Likely reading: a mafia player
-    whose model differs from the town's is the odd voice out, so cross-model win rates mix deception
-    skill with stylistic detectability. Few town speeches name style outright (1-6 per run of ~60), but
-    a stylistic tell wouldn't usually be said aloud. Run 42 (Haiku mafia v gpt-oss town) is a direct
-    test: gpt-oss town won only 2/10 v gpt-oss mafia (run 37); if it wins a lot v Haiku mafia, the
-    odd-voice reading gains support.
-  - Still to run: mafia-haiku-vs-gptoss (run 42). Original proposal: Per-game costs measured so far:
+  - run 42 mafia-haiku-vs-gptoss (Haiku mafia, gpt-oss town): TOWN WON 0/10, $0.0266, 223 calls.
+    8 games ended night 2, 2 night 3 (in both, town voted a mafia out day 1 and still lost). 1 invalid
+    check, 10 null votes, clean audit. gpt-oss town voted out its own detective on day 1 in 3 games
+    (04, 05, 09), sometimes right after the detective named a real mafia.
+  - RETRACTED: after run 41 I read "mirror games go to mafia, cross-model games to town" (3/20 v 25/30)
+    as the mafia being the odd voice out. Run 42 refutes that as the main driver: Haiku mafia were the
+    odd voice among gpt-oss town and won 10/10. The mirror/cross split came from which models sat in
+    which cells. (Some same-voice effect for Haiku town can't be ruled out, but it isn't needed.)
+  - RESULT of the plan (runs 38-42, 50 games, $1.58 of the ~$1.90 budget). Town wins, town model x mafia:
+                    mafia Haiku   mafia Sonnet   mafia gpt-oss
+      town Haiku       1/10          7/10           9/10
+      town Sonnet      9/10           -              -
+      town gpt-oss     0/10           -           2/10 (run 37)
+    Against a Haiku town the mafia rank Haiku (wins 9/10) > Sonnet (3/10) > gpt-oss (1/10); against
+    Haiku mafia the towns rank Sonnet (9/10) > Haiku (1/10) >= gpt-oss (0/10). Fisher two-sided, each
+    p <= 0.02 (1/10 v 7/10 p 0.02; 1/10 v 9/10 p 0.001). So: Sonnet is a strong town and a weak mafia
+    (it pushes early and visibly, its partners echo each other and split votes); Haiku is a strong
+    mafia (stays in the "let's wait" consensus, the pair vote together) and a weak town against itself;
+    gpt-oss is weak on both sides. Caveats: 10 games per cell; no Sonnet mirror; one deal set.
+  - Mechanics seen across all 50: the day-1 vote decides the game. Every day 1 eliminated someone. The
+    20 misses (12 villagers, 8 of town's own detectives) all lost on night 2; the 30 day-1 hits won 26
+    (on day 2) and lost 4 (night 3, both in runs 38 and 42). Town votes on mafia 97% and
+    94% with Haiku town v gpt-oss / Sonnet mafia, 31% for gpt-oss town. Deals are balanced: every deal
+    2/5 or 3/5 town wins.
+  - Report fix found in the run 42 data: the claim regex missed "I've checked X"; now also matches
+    "I've"/"I have checked" (gpt-oss town claims 2/10 -> 4/10).
+  - `arena report --since 38` (after the fix):
+
+    50 game(s) from 5 run(s), runs 38-42
+
+    Town win rate by lineup
+    lineup                 mafia              town               games   town won
+    ---------------------  -----------------  -----------------  -----  ---------
+    mafia-gptoss-vs-haiku  gpt-oss:20b        claude-haiku-5-5      10  9/10  90%
+    mafia-haiku            claude-haiku-5-5   claude-haiku-5-5      10  1/10  10%
+    mafia-haiku-vs-gptoss  claude-haiku-5-5   gpt-oss:20b           10  0/10   0%
+    mafia-haiku-vs-sonnet  claude-haiku-5-5   claude-sonnet-5-5     10  9/10  90%
+    mafia-sonnet-vs-haiku  claude-sonnet-5-5  claude-haiku-5-5      10  7/10  70%
+
+    Win rate by model and side, across lineups
+    model              won as mafia  vs other models  won as town  vs other models
+    -----------------  ------------  ---------------  -----------  ---------------
+    claude-haiku-5-5     20/30  67%       11/20  55%   17/30  57%       16/20  80%
+    claude-sonnet-5-5     3/10  30%        3/10  30%    9/10  90%        9/10  90%
+    gpt-oss:20b           1/10  10%        1/10  10%    0/10   0%        0/10   0%
+
+    By deal (each game id deals the same seats in every lineup)
+    game     mafia          games  town won
+    -------  -------------  -----  --------
+    game-01  Blake, Emery       5  3/5  60%
+    game-02  Finley, Emery      5  2/5  40%
+    game-03  Emery, Casey       5  2/5  40%
+    game-04  Finley, Emery      5  3/5  60%
+    game-05  Blake, Emery       5  3/5  60%
+    game-06  Finley, Emery      5  3/5  60%
+    game-07  Avery, Blake       5  3/5  60%
+    game-08  Avery, Finley      5  2/5  40%
+    game-09  Emery, Casey       5  3/5  60%
+    game-10  Avery, Blake       5  2/5  40%
+
+    How games end
+    ended on        games  town won  mafia won
+    ---------  ----------  --------  ---------
+    night 2            20         0         20
+    day 2              26        26          0
+    night 3             4         0          4
+    any night  24/50  48%         0         24
+    any day    26/50  52%        26          0
+
+    Town play by lineup
+    lineup                 games  town votes on mafia  checks found mafia  det. claimed  det. survived  det. voted out
+    ---------------------  -----  -------------------  ------------------  ------------  -------------  --------------
+    mafia-gptoss-vs-haiku     10           61/63  97%           9/19  47%     8/10  80%      1/10  10%       0/10   0%
+    mafia-haiku               10           20/37  54%           6/15  40%     7/10  70%      0/10   0%       3/10  30%
+    mafia-haiku-vs-gptoss     10           11/36  31%           3/12  25%     4/10  40%      0/10   0%       3/10  30%
+    mafia-haiku-vs-sonnet     10           58/67  87%           9/18  50%     6/10  60%      4/10  40%       0/10   0%
+    mafia-sonnet-vs-haiku     10           51/54  94%           7/17  41%     9/10  90%      0/10   0%       2/10  20%
+
+    Invalid replies, calls and cost per game, by lineup
+    lineup                 games  invalid (kill/check/vote)  calls     cost  time
+    ---------------------  -----  -------------------------  -----  -------  ----
+    mafia-gptoss-vs-haiku     10                  0 (0/0/0)   28.1  $0.0058  152s
+    mafia-haiku               10                  0 (0/0/0)   23.3  $0.0066   90s
+    mafia-haiku-vs-gptoss     10                  1 (0/1/0)   22.3  $0.0027  110s
+    mafia-haiku-vs-sonnet     10                  0 (0/0/0)   28.0  $0.0897  106s
+    mafia-sonnet-vs-haiku     10                  0 (0/0/0)   26.3  $0.0535  117s
+
+    Rates come with their counts (won/games); one game per cell is noise, not evidence.
+    A game with one model on both sides counts for it as mafia and as town; "vs other models"
+    leaves those games out.
+    claimed = the detective said "I'm the detective" or "I checked <name>" in a speech (a
+    text match: a claim made only by implication is missed).
+
+  - Possible next steps (not started, need the user's call): mafia-sonnet mirror x 10 (~$1.80) to fill
+    the last cell; the vote rule question from run 38 (majority of the living to eliminate?), as a
+    separate experiment since it changes the game.
+  - Original proposal: Per-game costs measured so far:
   mafia-haiku $0.0100 (29 calls), mafia-sonnet-vs-haiku $0.0394 (20 calls, a short game), mafia-haiku-
   vs-sonnet $0.1244 (29 calls). Per call: Sonnet ~$0.0045 as mafia, ~$0.0075 as town; Haiku ~$0.0003-5.
   A game is 20-32 calls, so estimates per game: haiku ~$0.010, sonnet-vs-haiku ~$0.04-0.06,

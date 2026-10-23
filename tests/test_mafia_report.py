@@ -171,6 +171,8 @@ def test_unscored_games_are_left_out(monkeypatch, tmp_path) -> None:
         "Good morning folks. I checked Finley—he’s not mafia.",
         "Emery is mafia per my last check.",
         "I investigated Drew on night 2.",
+        "Ladies, I’ve checked Finley—he’s definitely mafia.",
+        "I have checked Casey: not mafia.",
         "I’m the detective, trust me.",
     ],
 )

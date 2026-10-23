@@ -255,8 +255,10 @@ Same deal every time: Blake + Emery mafia, Avery detective (game-01).
     N's votes, narrator prompts hold only "Facts:" lines. 0 problems in 18 games. Checked the audit
     itself by planting 4 leaks in a copy of the db: all 4 caught.
   - Pattern: with 7 players, eliminating a villager on day 1 loses on night 2 (5 -> 4 alive, 2 mafia
-    v 2 town); abstaining (no elimination) would not. All 10 night-2 endings in the db are exactly
-    that. gpt-oss town put 26/46 votes (57%) on mafia in run 37 but split them, so the plurality missed.
+    v 2 town). All 10 night-2 endings up to run 37 are exactly that. gpt-oss town put 26/46 votes
+    (57%) on mafia in run 37 but split them, so the plurality missed. (Corrected after run 38:
+    abstaining does NOT protect town, since plurality counts only cast votes: the two mafia voting
+    together beat any number of `none` votes.)
 - Part 3 feat/mafia-report: `arena report [--plugin mafia] [--since RUN_ID]`. Optional Plugin hook
   `report(log, since) -> str` (core.plugin.Reports, isinstance-checked by the CLI); plugins/mafia/
   report.py. Stores nothing new: results + metrics; models per side from calls (with think), falling back
@@ -334,8 +336,18 @@ Same deal every time: Blake + Emery mafia, Avery detective (game-01).
 
 - Paid matchup plan: user approved A + C on 2026-10-23 (~$1.90). Lineups mafia-gptoss-vs-haiku and
   mafia-haiku-vs-gptoss added to config/lineups.yaml (Haiku narrator, like the other cross lineups).
-  The user starts the runs (auto mode blocks paid runs); next run id is 38, so compare with
-  `arena report --since 38` (and the full report for everything). Original proposal: Per-game costs measured so far:
+  The user starts the runs (auto mode blocks paid runs); compare with `arena report --since 38`.
+  - run 38 mafia-haiku (10 games): TOWN WON 1/10 (game-05, day 2), $0.0658 total ($0.0047-0.0106 per
+    game, under the ~$0.010 estimate), 233 calls, 898 s. 7 games ended night 2, 2 night 3. 0 invalid
+    replies; 12 null votes, all deliberate `VOTE: none`. Leak audit clean. Max prompt 2,363 tokens.
+    Finding: Haiku town abstains a lot on day 1. In game-06 and game-07 all four town players voted
+    none, both mafia voted the same villager, and those 2 votes eliminated him (plurality of cast
+    votes). In game-04 town (and both mafia) voted out its own detective 5-1. Rule question for the
+    user, NOT changed (changing it mid-matchup would split the data): require a majority of the
+    living, or count abstentions, to eliminate?
+    (run 28, Haiku mirror on game-01, was a town win; run 38's game-01 a mafia win: same deal, noise.)
+  - Still to run: mafia-sonnet-vs-haiku, mafia-haiku-vs-sonnet, mafia-gptoss-vs-haiku,
+    mafia-haiku-vs-gptoss. Original proposal: Per-game costs measured so far:
   mafia-haiku $0.0100 (29 calls), mafia-sonnet-vs-haiku $0.0394 (20 calls, a short game), mafia-haiku-
   vs-sonnet $0.1244 (29 calls). Per call: Sonnet ~$0.0045 as mafia, ~$0.0075 as town; Haiku ~$0.0003-5.
   A game is 20-32 calls, so estimates per game: haiku ~$0.010, sonnet-vs-haiku ~$0.04-0.06,

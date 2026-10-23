@@ -457,8 +457,10 @@ Same deal every time: Blake + Emery mafia, Avery detective (game-01).
     claimed = the detective said "I'm the detective" or "I checked <name>" in a speech (a
     text match: a claim made only by implication is missed).
 
-  - Possible next steps (not started, need the user's call): mafia-sonnet mirror x 10 (~$1.80) to fill
-    the last cell; the vote rule question from run 38 (majority of the living to eliminate?), as a
+  - User approved the Sonnet mirror (2026-10-23): lineup mafia-sonnet added (Sonnet players, Haiku
+    narrator). Estimate ~$1.25 for 10 games (Sonnet $0.0056/call in runs 39-40 x ~22 player calls per
+    game; $0.95-1.60 by game length). The user starts it: `! uv run arena run --lineup mafia-sonnet`.
+  - Still open: the vote rule question from run 38 (majority of the living to eliminate?), as a
     separate experiment since it changes the game.
   - Original proposal: Per-game costs measured so far:
   mafia-haiku $0.0100 (29 calls), mafia-sonnet-vs-haiku $0.0394 (20 calls, a short game), mafia-haiku-

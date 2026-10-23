@@ -99,6 +99,17 @@ mafia-haiku-vs-sonnet:
     detective: anthropic/claude-sonnet-5-5
     villager: anthropic/claude-sonnet-5-5
 
+# All Sonnet players, the mirror for the Sonnet cells above. Haiku narrator like the other paid
+# lineups (flavor only; players never see it).
+mafia-sonnet:
+  plugin: mafia
+  mode: game
+  roles:
+    narrator: anthropic/claude-haiku-5-5
+    mafia: anthropic/claude-sonnet-5-5
+    detective: anthropic/claude-sonnet-5-5
+    villager: anthropic/claude-sonnet-5-5
+
 # gpt-oss against Haiku, each way: puts the free gpt-oss games against another model. Only the
 # Haiku seats cost. One ollama model per lineup, so gpt-oss stays loaded all game.
 mafia-gptoss-vs-haiku:

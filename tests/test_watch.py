@@ -621,6 +621,7 @@ def test_hidden_night_facts_are_shown_once_the_game_is_over(monkeypatch, tmp_pat
     assert "night 2: Emery chose Casey · Casey (villager) killed" in text
 
 
+@pytest.mark.skipif(getattr(os, "geteuid", lambda: -1)() == 0, reason="root can write to a 0o555 directory")
 def test_watch_will_not_follow_a_run_through_an_immutable_connection(monkeypatch, tmp_path, capsys) -> None:
     log, run_id = run_bounty(monkeypatch, tmp_path, "solo", [GOOD], [True])
     log.db.close()
